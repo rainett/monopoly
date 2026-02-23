@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(go get:*)",
+      "Bash(go build:*)",
+      "Bash(timeout:*)",
+      "Bash(./monopoly.exe)",
+      "Bash(taskkill:*)",
+      "Bash(curl:*)",
+      "Bash(sqlite3:*)",
+      "Bash(go test:*)",
+      "Bash(tasklist:*)",
+      "Bash(netstat:*)",
+      "Bash(chmod:*)"
+    ]
+  }
+}

@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Monopoly - Lobby</title>
+    <style>
+        body {
+            font-family: monospace;
+            background-color: #1e1e1e;
+            color: #d4d4d4;
+            margin: 0;
+            padding: 2rem;
+        }
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 2rem;
+        }
+        h1 {
+            color: #4ec9b0;
+            margin: 0;
+        }
+        .user-info {
+            color: #858585;
+        }
+        button {
+            padding: 0.5rem 1rem;
+            background-color: #0e639c;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-left: 0.5rem;
+        }
+        button:hover {
+            background-color: #1177bb;
+        }
+        button.logout {
+            background-color: #555;
+        }
+        button.logout:hover {
+            background-color: #666;
+        }
+        .games-container {
+            background-color: #2d2d30;
+            padding: 1.5rem;
+            border-radius: 8px;
+        }
+        .game-item {
+            background-color: #3c3c3c;
+            padding: 1rem;
+            margin: 0.5rem 0;
+            border-radius: 4px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .game-info {
+            flex: 1;
+        }
+        .game-status {
+            color: #4ec9b0;
+            font-weight: bold;
+        }
+        .game-status.in-progress {
+            color: #ce9178;
+        }
+        .empty-state {
+            text-align: center;
+            color: #858585;
+            padding: 2rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div>
+            <h1>Game Lobby</h1>
+            <div class="user-info">Logged in as: <span id="username"></span></div>
+        </div>
+        <div>
+            <button onclick="createGame()">Create Game</button>
+            <button class="logout" onclick="logout()">Logout</button>
+        </div>
+    </div>
+
+    <div class="games-container">
+        <h2>Available Games</h2>
+        <div id="gamesList"></div>
+    </div>
+
+    <script>
+        const username = localStorage.getItem('username');
+        if (!username) {
+            window.location.href = '/';
+        }
+        document.getElementById('username').textContent = username;
+
+        async function loadGames() {
+            try {
+                const response = await fetch('/api/lobby/games', {
+                    credentials: 'include'
+                });
+
+                if (response.ok) {
+                    const games = await response.json();
+                    displayGames(games);
+                } else if (response.status === 401) {
+                    window.location.href = '/';
+                }
+            } catch (err) {
+                console.error('Failed to load games:', err);
+            }
+        }
+
+        function displayGames(games) {
+            const gamesListDiv = document.getElementById('gamesList');
+
+            if (!games || games.length === 0) {
+                gamesListDiv.innerHTML = '<div class="empty-state">No games available. Create one!</div>';
+                return;
+            }
+
+            gamesListDiv.innerHTML = games.map(game => `
+                <div class="game-item">
+                    <div class="game-info">
+                        <div>Game #${game.id} - <span class="game-status ${game.status === 'in_progress' ? 'in-progress' : ''}">${game.status}</span></div>
+                        <div>Players: ${game.players.length}/${game.maxPlayers}</div>
+                    </div>
+                    <button onclick="joinGame(${game.id})" ${game.status !== 'waiting' || game.players.length >= game.maxPlayers ? 'disabled' : ''}>
+                        Join
+                    </button>
+                </div>
+            `).join('');
+        }
+
+        async function createGame() {
+            try {
+                const response = await fetch('/api/lobby/create', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ maxPlayers: 4 }),
+                    credentials: 'include'
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    await joinGame(data.gameId);
+                }
+            } catch (err) {
+                console.error('Failed to create game:', err);
+            }
+        }
+
+        async function joinGame(gameId) {
+            try {
+                const response = await fetch(`/api/lobby/join/${gameId}`, {
+                    method: 'POST',
+                    credentials: 'include'
+                });
+
+                if (response.ok) {
+                    window.location.href = `/game.html?gameId=${gameId}`;
+                } else {
+                    const error = await response.text();
+                    alert(error);
+                }
+            } catch (err) {
+                console.error('Failed to join game:', err);
+            }
+        }
+
+        async function logout() {
+            try {
+                await fetch('/api/auth/logout', {
+                    method: 'POST',
+                    credentials: 'include'
+                });
+            } catch (err) {
+                console.error('Logout failed:', err);
+            }
+            localStorage.clear();
+            window.location.href = '/';
+        }
+
+        loadGames();
+        setInterval(loadGames, 3000);
+    </script>
+</body>
+</html>

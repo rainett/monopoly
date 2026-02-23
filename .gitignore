@@ -1,0 +1,28 @@
+# Binaries
+monopoly.exe
+monopoly
+*.exe
+
+# Database
+*.db
+*.db-journal
+
+# Go
+*.test
+*.out
+vendor/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+/cookies.txt
