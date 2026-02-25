@@ -11,7 +11,7 @@ import (
 
 var (
 	ErrInvalidUsername    = errors.New("username must be alphanumeric and 3-20 characters")
-	ErrInvalidPassword    = errors.New("password must be at least 6 characters")
+	ErrInvalidPassword    = errors.New("password must be at least 8 characters and contain both letters and numbers")
 	ErrUserExists         = errors.New("username already exists")
 	ErrInvalidCredentials = errors.New("invalid username or password")
 )
@@ -29,6 +29,9 @@ func NewService(store store.Store, sessionManager *SessionManager) *Service {
 }
 
 func (s *Service) Register(username, password string) error {
+	// Sanitize username to prevent XSS
+	username = SanitizeUsername(username)
+
 	if err := validateUsername(username); err != nil {
 		return err
 	}
@@ -59,6 +62,9 @@ func (s *Service) Register(username, password string) error {
 }
 
 func (s *Service) Login(username, password string) (string, error) {
+	// Sanitize username to prevent XSS
+	username = SanitizeUsername(username)
+
 	user, err := s.store.GetUserByUsername(username)
 	if err != nil {
 		return "", fmt.Errorf("failed to get user: %w", err)
@@ -103,8 +109,25 @@ func validateUsername(username string) error {
 }
 
 func validatePassword(password string) error {
-	if len(password) < 6 {
+	if len(password) < 8 {
 		return ErrInvalidPassword
 	}
+
+	hasLetter := false
+	hasNumber := false
+
+	for _, char := range password {
+		if (char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') {
+			hasLetter = true
+		}
+		if char >= '0' && char <= '9' {
+			hasNumber = true
+		}
+	}
+
+	if !hasLetter || !hasNumber {
+		return ErrInvalidPassword
+	}
+
 	return nil
 }

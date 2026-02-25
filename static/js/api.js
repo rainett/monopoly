@@ -1,16 +1,41 @@
 class ApiClient {
     constructor() {
         this.baseURL = window.location.origin;
+        this.csrfToken = null;
+    }
+
+    async fetchCSRFToken() {
+        try {
+            const response = await fetch(`${this.baseURL}/api/csrf-token`, {
+                credentials: 'include',
+            });
+            const data = await response.json();
+            this.csrfToken = data.csrfToken;
+        } catch (error) {
+            console.warn('Failed to fetch CSRF token:', error);
+        }
     }
 
     async request(endpoint, options = {}) {
+        // Fetch CSRF token if not already available and this is a POST request
+        if (!this.csrfToken && options.method === 'POST') {
+            await this.fetchCSRFToken();
+        }
+
+        const headers = {
+            'Content-Type': 'application/json',
+            ...options.headers,
+        };
+
+        // Add CSRF token to POST requests
+        if (this.csrfToken && options.method === 'POST') {
+            headers['X-CSRF-Token'] = this.csrfToken;
+        }
+
         const config = {
             ...options,
             credentials: 'include',
-            headers: {
-                'Content-Type': 'application/json',
-                ...options.headers,
-            },
+            headers,
         };
 
         // Add timeout to fetch request

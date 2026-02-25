@@ -5,19 +5,34 @@ import (
 	"encoding/base64"
 	"net/http"
 	"sync"
+	"time"
 )
 
+type Session struct {
+	UserID    int64
+	ExpiresAt time.Time
+}
+
 type SessionManager struct {
-	sessions map[string]int64
+	sessions map[string]*Session
 	mu       sync.RWMutex
+	csrfKey  string
 }
 
 func NewSessionManager(secret string) *SessionManager {
-	// secret parameter kept for future use (session signing/encryption)
-	// Currently sessions are stored in memory only
-	return &SessionManager{
-		sessions: make(map[string]int64),
+	sm := &SessionManager{
+		sessions: make(map[string]*Session),
+		csrfKey:  secret, // Use session secret as CSRF key
 	}
+
+	// Start cleanup goroutine
+	go sm.cleanupExpiredSessions()
+
+	return sm
+}
+
+func (sm *SessionManager) GetCSRFKey() string {
+	return sm.csrfKey
 }
 
 func (sm *SessionManager) CreateSession(userID int64) (string, error) {
@@ -27,7 +42,10 @@ func (sm *SessionManager) CreateSession(userID int64) (string, error) {
 	}
 
 	sm.mu.Lock()
-	sm.sessions[sessionID] = userID
+	sm.sessions[sessionID] = &Session{
+		UserID:    userID,
+		ExpiresAt: time.Now().Add(7 * 24 * time.Hour), // 7 days
+	}
 	sm.mu.Unlock()
 
 	return sessionID, nil
@@ -35,9 +53,21 @@ func (sm *SessionManager) CreateSession(userID int64) (string, error) {
 
 func (sm *SessionManager) GetUserID(sessionID string) (int64, bool) {
 	sm.mu.RLock()
-	defer sm.mu.RUnlock()
-	userID, exists := sm.sessions[sessionID]
-	return userID, exists
+	session, exists := sm.sessions[sessionID]
+	sm.mu.RUnlock()
+
+	if !exists {
+		return 0, false
+	}
+
+	// Check if session is expired
+	if time.Now().After(session.ExpiresAt) {
+		// Delete expired session
+		sm.DeleteSession(sessionID)
+		return 0, false
+	}
+
+	return session.UserID, true
 }
 
 func (sm *SessionManager) DeleteSession(sessionID string) {
@@ -76,6 +106,22 @@ func GetSessionFromRequest(r *http.Request) string {
 		return ""
 	}
 	return cookie.Value
+}
+
+func (sm *SessionManager) cleanupExpiredSessions() {
+	ticker := time.NewTicker(1 * time.Hour)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		sm.mu.Lock()
+		now := time.Now()
+		for id, session := range sm.sessions {
+			if now.After(session.ExpiresAt) {
+				delete(sm.sessions, id)
+			}
+		}
+		sm.mu.Unlock()
+	}
 }
 
 func generateSessionID() (string, error) {

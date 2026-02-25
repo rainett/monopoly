@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/gorilla/csrf"
 	"github.com/gorilla/mux"
 	"github.com/gorilla/websocket"
 )
@@ -41,6 +42,14 @@ func NewHandlers(authService *auth.Service, lobby *game.Lobby, engine *game.Engi
 		wsManager:   wsManager,
 		store:       store,
 	}
+}
+
+// CSRF token handler
+func (h *Handlers) GetCSRFToken(w http.ResponseWriter, r *http.Request) {
+	token := csrf.Token(r)
+	json.NewEncoder(w).Encode(map[string]string{
+		"csrfToken": token,
+	})
 }
 
 // Auth handlers

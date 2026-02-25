@@ -7,12 +7,14 @@ import (
 	"monopoly/ws"
 	"net/http"
 
+	"github.com/gorilla/csrf"
 	"github.com/gorilla/mux"
 )
 
 type Server struct {
-	router   *mux.Router
-	handlers *Handlers
+	router       *mux.Router
+	handlers     *Handlers
+	csrfKey      []byte
 }
 
 func NewServer(authService *auth.Service, lobby *game.Lobby, engine *game.Engine, wsManager *ws.Manager, store store.Store) *Server {
@@ -22,6 +24,7 @@ func NewServer(authService *auth.Service, lobby *game.Lobby, engine *game.Engine
 	server := &Server{
 		router:   router,
 		handlers: handlers,
+		csrfKey:  []byte(authService.GetSessionManager().GetCSRFKey()),
 	}
 
 	server.setupRoutes(authService)
@@ -34,18 +37,36 @@ func (s *Server) setupRoutes(authService *auth.Service) {
 	s.router.Use(SecurityHeadersMiddleware)
 	s.router.Use(CORSMiddleware)
 
-	// Auth routes (public)
-	s.router.HandleFunc("/api/auth/register", s.handlers.Register).Methods("POST")
-	s.router.HandleFunc("/api/auth/login", s.handlers.Login).Methods("POST")
+	// CSRF protection for POST requests (excluding WebSocket)
+	// Secure flag should be true in production with HTTPS
+	csrfMiddleware := csrf.Protect(
+		s.csrfKey,
+		csrf.Secure(false), // Set to true in production
+		csrf.Path("/"),
+		csrf.SameSite(csrf.SameSiteLaxMode),
+	)
 
-	// Protected routes
+	// Rate limiters for auth endpoints
+	// Login: 5 requests per minute per IP
+	loginLimiter := NewRateLimiter(5.0/60.0, 5)
+	// Register: 3 requests per minute per IP
+	registerLimiter := NewRateLimiter(3.0/60.0, 3)
+
+	// CSRF token endpoint (public)
+	s.router.HandleFunc("/api/csrf-token", s.handlers.GetCSRFToken).Methods("GET")
+
+	// Auth routes (public) with rate limiting and CSRF
+	s.router.Handle("/api/auth/register", csrfMiddleware(registerLimiter.Middleware(http.HandlerFunc(s.handlers.Register)))).Methods("POST")
+	s.router.Handle("/api/auth/login", csrfMiddleware(loginLimiter.Middleware(http.HandlerFunc(s.handlers.Login)))).Methods("POST")
+
+	// Protected routes with CSRF
 	protected := s.router.PathPrefix("/api").Subrouter()
 	protected.Use(AuthMiddleware(authService))
 
-	protected.HandleFunc("/auth/logout", s.handlers.Logout).Methods("POST")
+	protected.Handle("/auth/logout", csrfMiddleware(http.HandlerFunc(s.handlers.Logout))).Methods("POST")
 	protected.HandleFunc("/lobby/games", s.handlers.ListGames).Methods("GET")
-	protected.HandleFunc("/lobby/create", s.handlers.CreateGame).Methods("POST")
-	protected.HandleFunc("/lobby/join/{gameId}", s.handlers.JoinGame).Methods("POST")
+	protected.Handle("/lobby/create", csrfMiddleware(http.HandlerFunc(s.handlers.CreateGame))).Methods("POST")
+	protected.Handle("/lobby/join/{gameId}", csrfMiddleware(http.HandlerFunc(s.handlers.JoinGame))).Methods("POST")
 	protected.HandleFunc("/lobby/games/{gameId}", s.handlers.GetGame).Methods("GET")
 
 	// WebSocket route (protected)
