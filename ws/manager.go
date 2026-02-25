@@ -137,8 +137,22 @@ func (m *Manager) handleMessage(client *Client, room *Room, msg *IncomingMessage
 	switch msg.Type {
 	case "ready":
 		isReady := true
-		if val, ok := msg.Payload["isReady"].(bool); ok {
-			isReady = val
+		if readyPayload, ok := msg.Payload["isReady"]; ok {
+			if readyBool, ok := readyPayload.(bool); ok {
+				isReady = readyBool
+			} else {
+				log.Printf("Invalid isReady payload type: %T", readyPayload)
+				errorMsg := OutgoingMessage{
+					Type:    "error",
+					Payload: map[string]string{"message": "Invalid isReady value"},
+				}
+				data, _ := json.Marshal(errorMsg)
+				select {
+				case client.send <- data:
+				default:
+				}
+				return
+			}
 		}
 		event, err = m.engine.SetReady(room.gameID, client.userID, isReady)
 

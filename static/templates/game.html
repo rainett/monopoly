@@ -1,0 +1,28 @@
+<div class="header">
+    <h1>Game <span id="gameId"></span></h1>
+    <button class="back" id="backBtn">Back to Lobby</button>
+</div>
+
+<div class="game-container">
+    <div class="panel">
+        <h2>Players</h2>
+        <div id="playersList"></div>
+        <div class="controls">
+            <button id="readyBtn">Ready</button>
+        </div>
+    </div>
+
+    <div class="panel">
+        <div class="game-status">
+            <div>Status: <span id="gameStatus"></span></div>
+            <div id="currentTurn"></div>
+        </div>
+
+        <div class="controls">
+            <button id="endTurnBtn" disabled>End Turn</button>
+        </div>
+
+        <h3>Game Log</h3>
+        <div class="game-log" id="gameLog"></div>
+    </div>
+</div>

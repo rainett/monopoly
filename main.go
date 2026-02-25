@@ -6,9 +6,10 @@ import (
 	"monopoly/auth"
 	"monopoly/config"
 	"monopoly/game"
-	"monopoly/http"
+	httpserver "monopoly/http"
 	"monopoly/store"
 	"monopoly/ws"
+	stdhttp "net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -38,12 +39,13 @@ func main() {
 	wsManager := ws.NewManager(engine)
 
 	// Initialize HTTP server
-	server := http.NewServer(authService, lobby, engine, wsManager, db)
+	server := httpserver.NewServer(authService, lobby, engine, wsManager, db)
+	srv := server.GetHTTPServer(cfg.ServerPort)
 
 	// Start server in a goroutine
 	go func() {
 		log.Printf("Server listening on http://localhost%s", cfg.ServerPort)
-		if err := server.Start(cfg.ServerPort); err != nil {
+		if err := srv.ListenAndServe(); err != nil && err != stdhttp.ErrServerClosed {
 			log.Fatalf("Server error: %v", err)
 		}
 	}()
@@ -59,11 +61,10 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	// Cleanup (database will be closed by defer)
-	select {
-	case <-ctx.Done():
-		log.Println("Shutdown timeout exceeded")
-	default:
-		log.Println("Server stopped")
+	// Shutdown HTTP server gracefully
+	if err := srv.Shutdown(ctx); err != nil {
+		log.Printf("Server forced to shutdown: %v", err)
 	}
+
+	log.Println("Server stopped")
 }

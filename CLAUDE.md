@@ -99,12 +99,74 @@ users (1) ──< (M) game_players (M) >── (1) games
 - Each game tracks player order and turn state
 - `is_current_turn` is exclusive (only one player per game)
 
+## Frontend Architecture (SPA)
+
+The frontend is a Single Page Application using vanilla JavaScript ES6 modules:
+
+**File Structure:**
+```
+static/
+├── index.html              # Single entry point
+├── css/
+│   └── main.css           # Consolidated styles
+├── js/
+│   ├── app.js             # Main application & routing orchestration
+│   ├── router.js          # Hash-based client router
+│   ├── api.js             # API client with error handling
+│   ├── template.js        # Template loader with caching
+│   └── views/             # View modules (logic only)
+│       ├── login.js       # Login view logic
+│       ├── register.js    # Registration view logic
+│       ├── lobby.js       # Game lobby view logic
+│       └── game.js        # Game room view logic with WebSocket
+└── templates/             # HTML templates (presentation only)
+    ├── login.html         # Login template
+    ├── register.html      # Registration template
+    ├── lobby.html         # Lobby template
+    └── game.html          # Game room template
+```
+
+**Routing:**
+- Hash-based routing (#/login, #/lobby, #/game?gameId=X)
+- No page reloads - smooth transitions between views
+- Router handles navigation, query parameters, and route protection
+
+**View Pattern:**
+Each view consists of:
+- HTML template in `static/templates/myview.html` (presentation)
+- JavaScript module in `static/js/views/myview.js` (logic)
+
+View modules export:
+- `async render(container, router)` - Loads template and sets up event handlers
+- `cleanup()` - Cleans up resources (timers, WebSocket connections)
+
+**Adding New Frontend Features:**
+1. Create HTML template in `static/templates/myview.html`
+2. Create view module in `static/js/views/myview.js`:
+   ```javascript
+   import { api } from '../api.js';
+   import { templateLoader } from '../template.js';
+
+   export async function render(container, router) {
+       const template = await templateLoader.load('myview');
+       container.innerHTML = template;
+       // Add event listeners here
+   }
+
+   export function cleanup() {
+       // Cleanup code here
+   }
+   ```
+3. Register route in `static/js/app.js`: `router.register('/myview', () => this.loadView(MyView))`
+4. Navigate: `router.navigate('/myview', { param: 'value' })`
+
 ## HTTP API Structure
 
 Routes in `http/server.go`:
 - **Public**: `/api/auth/register`, `/api/auth/login`
 - **Protected** (requires session): `/api/lobby/*`, `/ws/game/:gameId`
-- **Static**: `/` serves from `./static/`
+- **Static Assets**: `/css/*`, `/js/*` serve from `./static/`
+- **SPA Fallback**: All other routes serve `index.html` (client-side routing)
 
 Middleware chain: `LoggingMiddleware` → `CORSMiddleware` → `AuthMiddleware` (protected routes only)
 
@@ -120,7 +182,7 @@ To add Monopoly game logic (dice, properties, money):
 4. **Add Store methods** in `store/store.go` interface: e.g., `GetProperties()`, `UpdatePlayerMoney()`
 5. **Add WebSocket message types** in `ws/messages.go`: e.g., `dice_rolled`, `property_bought`
 6. **Handle new messages** in `ws/manager.go` `handleMessage()` switch statement
-7. **Update frontend** `static/game.html` to handle new event types
+7. **Update frontend** `static/js/views/game.js` to handle new event types in `handleWebSocketMessage()`
 
 The architecture is designed for this expansion—state machine pattern makes adding commands straightforward.
 

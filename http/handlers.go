@@ -18,7 +18,10 @@ var upgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
 	CheckOrigin: func(r *http.Request) bool {
-		return true // Allow all origins for development
+		origin := r.Header.Get("Origin")
+		// In production, check against allowed origins
+		// For now, only allow same origin
+		return origin == "" || origin == "http://"+r.Host || origin == "https://"+r.Host
 	},
 }
 
@@ -80,7 +83,16 @@ func (h *Handlers) Login(w http.ResponseWriter, r *http.Request) {
 
 	h.authService.GetSessionManager().SetSessionCookie(w, sessionID)
 
-	user, _ := h.store.GetUserByUsername(req.Username)
+	user, err := h.store.GetUserByUsername(req.Username)
+	if err != nil {
+		http.Error(w, "Failed to get user info", http.StatusInternalServerError)
+		return
+	}
+	if user == nil {
+		http.Error(w, "User not found", http.StatusNotFound)
+		return
+	}
+
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"message":  "Login successful",
 		"userId":   user.ID,

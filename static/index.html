@@ -3,105 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Monopoly - Login</title>
-    <style>
-        body {
-            font-family: monospace;
-            background-color: #1e1e1e;
-            color: #d4d4d4;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            height: 100vh;
-            margin: 0;
-        }
-        .container {
-            background-color: #2d2d30;
-            padding: 2rem;
-            border-radius: 8px;
-            width: 300px;
-        }
-        h1 {
-            text-align: center;
-            color: #4ec9b0;
-        }
-        input {
-            width: 100%;
-            padding: 0.5rem;
-            margin: 0.5rem 0;
-            background-color: #3c3c3c;
-            border: 1px solid #555;
-            color: #d4d4d4;
-            border-radius: 4px;
-            box-sizing: border-box;
-        }
-        button {
-            width: 100%;
-            padding: 0.5rem;
-            margin: 0.5rem 0;
-            background-color: #0e639c;
-            color: white;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-        }
-        button:hover {
-            background-color: #1177bb;
-        }
-        .error {
-            color: #f48771;
-            margin: 0.5rem 0;
-            text-align: center;
-        }
-        a {
-            color: #4ec9b0;
-            text-decoration: none;
-            display: block;
-            text-align: center;
-            margin-top: 1rem;
-        }
-    </style>
+    <meta name="description" content="Multiplayer Monopoly Game">
+    <title>Monopoly</title>
+    <link rel="stylesheet" href="/css/main.css">
 </head>
 <body>
-    <div class="container">
-        <h1>Monopoly</h1>
-        <form id="loginForm">
-            <input type="text" id="username" placeholder="Username" required>
-            <input type="password" id="password" placeholder="Password" required>
-            <button type="submit">Login</button>
-            <div id="error" class="error"></div>
-        </form>
-        <a href="/register.html">Create Account</a>
-    </div>
-
-    <script>
-        document.getElementById('loginForm').addEventListener('submit', async (e) => {
-            e.preventDefault();
-            const username = document.getElementById('username').value;
-            const password = document.getElementById('password').value;
-            const errorDiv = document.getElementById('error');
-
-            try {
-                const response = await fetch('/api/auth/login', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ username, password }),
-                    credentials: 'include'
-                });
-
-                if (response.ok) {
-                    const data = await response.json();
-                    localStorage.setItem('userId', data.userId);
-                    localStorage.setItem('username', data.username);
-                    window.location.href = '/lobby.html';
-                } else {
-                    const error = await response.text();
-                    errorDiv.textContent = error;
-                }
-            } catch (err) {
-                errorDiv.textContent = 'Login failed';
-            }
-        });
-    </script>
+    <div id="app"></div>
+    <script type="module" src="/js/app.js"></script>
 </body>
 </html>

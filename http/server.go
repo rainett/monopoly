@@ -1,7 +1,6 @@
 package http
 
 import (
-	"log"
 	"monopoly/auth"
 	"monopoly/game"
 	"monopoly/store"
@@ -32,6 +31,7 @@ func NewServer(authService *auth.Service, lobby *game.Lobby, engine *game.Engine
 func (s *Server) setupRoutes(authService *auth.Service) {
 	// Apply global middleware
 	s.router.Use(LoggingMiddleware)
+	s.router.Use(SecurityHeadersMiddleware)
 	s.router.Use(CORSMiddleware)
 
 	// Auth routes (public)
@@ -53,11 +53,22 @@ func (s *Server) setupRoutes(authService *auth.Service) {
 	wsRouter.Use(AuthMiddleware(authService))
 	wsRouter.HandleFunc("/game/{gameId}", s.handlers.HandleWebSocket)
 
-	// Static files
-	s.router.PathPrefix("/").Handler(http.FileServer(http.Dir("./static")))
+	// Static files (CSS, JS, Templates)
+	s.router.PathPrefix("/css/").Handler(http.StripPrefix("/css/", http.FileServer(http.Dir("./static/css"))))
+	s.router.PathPrefix("/js/").Handler(http.StripPrefix("/js/", http.FileServer(http.Dir("./static/js"))))
+	s.router.PathPrefix("/templates/").Handler(http.StripPrefix("/templates/", http.FileServer(http.Dir("./static/templates"))))
+
+	// SPA fallback - serve index.html for all other routes
+	s.router.PathPrefix("/").HandlerFunc(s.serveSPA)
 }
 
-func (s *Server) Start(addr string) error {
-	log.Printf("Server starting on %s", addr)
-	return http.ListenAndServe(addr, s.router)
+func (s *Server) serveSPA(w http.ResponseWriter, r *http.Request) {
+	http.ServeFile(w, r, "./static/index.html")
+}
+
+func (s *Server) GetHTTPServer(addr string) *http.Server {
+	return &http.Server{
+		Addr:    addr,
+		Handler: s.router,
+	}
 }

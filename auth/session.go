@@ -10,13 +10,13 @@ import (
 type SessionManager struct {
 	sessions map[string]int64
 	mu       sync.RWMutex
-	secret   string
 }
 
 func NewSessionManager(secret string) *SessionManager {
+	// secret parameter kept for future use (session signing/encryption)
+	// Currently sessions are stored in memory only
 	return &SessionManager{
 		sessions: make(map[string]int64),
-		secret:   secret,
 	}
 }
 

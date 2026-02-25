@@ -11,6 +11,9 @@ var (
 	ErrNotEnoughPlayers = errors.New("not enough players to start")
 	ErrNotYourTurn      = errors.New("not your turn")
 	ErrGameNotStarted   = errors.New("game not started")
+	ErrGameNotFound     = errors.New("game not found")
+	ErrAlreadyInGame    = errors.New("already in game")
+	ErrUserNotInGame    = errors.New("user not in game")
 )
 
 type Engine struct {
@@ -22,12 +25,16 @@ func NewEngine(store store.Store) *Engine {
 }
 
 func (e *Engine) GetGameState(gameID int64) (*GameState, error) {
+	if gameID <= 0 {
+		return nil, ErrGameNotFound
+	}
+
 	game, err := e.store.GetGame(gameID)
 	if err != nil {
 		return nil, err
 	}
 	if game == nil {
-		return nil, errors.New("game not found")
+		return nil, ErrGameNotFound
 	}
 
 	players, err := e.store.GetGamePlayers(gameID)
@@ -76,7 +83,7 @@ func (e *Engine) JoinGame(gameID, userID int64, username string) (*Event, error)
 	// Check if user already in game
 	for _, p := range state.Players {
 		if p.UserID == userID {
-			return nil, errors.New("already in game")
+			return nil, ErrAlreadyInGame
 		}
 	}
 
@@ -120,7 +127,7 @@ func (e *Engine) SetReady(gameID, userID int64, isReady bool) (*Event, error) {
 		}
 	}
 	if !found {
-		return nil, errors.New("user not in game")
+		return nil, ErrUserNotInGame
 	}
 
 	if err := e.store.UpdatePlayerReady(gameID, userID, isReady); err != nil {
