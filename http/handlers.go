@@ -47,13 +47,25 @@ func NewHandlers(authService *auth.Service, lobby *game.Lobby, engine *game.Engi
 // CSRF token handler
 func (h *Handlers) GetCSRFToken(w http.ResponseWriter, r *http.Request) {
 	token := csrf.Token(r)
+	log.Printf("CSRF token generated: %s (len=%d)", token[:min(20, len(token))], len(token))
+
+	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{
 		"csrfToken": token,
 	})
 }
 
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
 // Auth handlers
 func (h *Handlers) Register(w http.ResponseWriter, r *http.Request) {
+	log.Printf("Register request received with CSRF header: %s", r.Header.Get("X-CSRF-Token")[:min(20, len(r.Header.Get("X-CSRF-Token")))])
+
 	var req struct {
 		Username string `json:"username"`
 		Password string `json:"password"`

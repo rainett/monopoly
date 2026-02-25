@@ -11,6 +11,17 @@ class App {
         this.container = document.getElementById('app');
         this.currentView = null;
 
+        this.init();
+    }
+
+    async init() {
+        // Fetch CSRF token early
+        try {
+            await api.fetchCSRFToken();
+        } catch (error) {
+            console.warn('Could not fetch CSRF token on init:', error);
+        }
+
         this.setupRoutes();
         this.setupAuthCheck();
     }

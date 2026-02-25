@@ -2,24 +2,47 @@ class ApiClient {
     constructor() {
         this.baseURL = window.location.origin;
         this.csrfToken = null;
+        this.csrfPromise = null;
     }
 
     async fetchCSRFToken() {
-        try {
-            const response = await fetch(`${this.baseURL}/api/csrf-token`, {
-                credentials: 'include',
-            });
-            const data = await response.json();
-            this.csrfToken = data.csrfToken;
-        } catch (error) {
-            console.warn('Failed to fetch CSRF token:', error);
+        // If already fetching, return the existing promise
+        if (this.csrfPromise) {
+            return this.csrfPromise;
+        }
+
+        this.csrfPromise = (async () => {
+            try {
+                const response = await fetch(`${this.baseURL}/api/csrf-token`, {
+                    credentials: 'include',
+                });
+                if (!response.ok) {
+                    throw new Error(`Failed to fetch CSRF token: ${response.status}`);
+                }
+                const data = await response.json();
+                this.csrfToken = data.csrfToken;
+                console.log('CSRF token fetched:', this.csrfToken ? 'success' : 'empty');
+            } catch (error) {
+                console.error('Failed to fetch CSRF token:', error);
+                throw error;
+            } finally {
+                this.csrfPromise = null;
+            }
+        })();
+
+        return this.csrfPromise;
+    }
+
+    async ensureCSRFToken() {
+        if (!this.csrfToken) {
+            await this.fetchCSRFToken();
         }
     }
 
     async request(endpoint, options = {}) {
-        // Fetch CSRF token if not already available and this is a POST request
-        if (!this.csrfToken && options.method === 'POST') {
-            await this.fetchCSRFToken();
+        // Fetch CSRF token if this is a POST request
+        if (options.method === 'POST' || options.method === 'PUT' || options.method === 'PATCH' || options.method === 'DELETE') {
+            await this.ensureCSRFToken();
         }
 
         const headers = {
@@ -27,8 +50,8 @@ class ApiClient {
             ...options.headers,
         };
 
-        // Add CSRF token to POST requests
-        if (this.csrfToken && options.method === 'POST') {
+        // Add CSRF token to state-changing requests
+        if (this.csrfToken && (options.method === 'POST' || options.method === 'PUT' || options.method === 'PATCH' || options.method === 'DELETE')) {
             headers['X-CSRF-Token'] = this.csrfToken;
         }
 
