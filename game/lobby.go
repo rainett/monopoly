@@ -34,7 +34,7 @@ func (l *Lobby) ListGames() ([]*GameState, error) {
 		return nil, err
 	}
 
-	var gameStates []*GameState
+	gameStates := make([]*GameState, 0, len(games))
 	for _, game := range games {
 		players, err := l.store.GetGamePlayers(game.ID)
 		if err != nil {

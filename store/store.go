@@ -63,6 +63,11 @@ func NewSQLiteStore(dbPath string) (*SQLiteStore, error) {
 	db.SetMaxOpenConns(25)
 	db.SetMaxIdleConns(5)
 
+	// Enable foreign key enforcement (SQLite requires this per-connection)
+	if _, err := db.Exec("PRAGMA foreign_keys = ON"); err != nil {
+		return nil, fmt.Errorf("failed to enable foreign keys: %w", err)
+	}
+
 	if _, err := db.Exec(schema); err != nil {
 		return nil, fmt.Errorf("failed to run migrations: %w", err)
 	}
@@ -152,6 +157,9 @@ func (s *SQLiteStore) ListGames() ([]*Game, error) {
 		}
 		games = append(games, game)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to iterate games: %w", err)
+	}
 	return games, nil
 }
 
@@ -194,6 +202,9 @@ func (s *SQLiteStore) GetGamePlayers(gameID int64) ([]*GamePlayer, error) {
 		player.IsReady = isReady == 1
 		player.IsCurrentTurn = isCurrentTurn == 1
 		players = append(players, player)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to iterate players: %w", err)
 	}
 	return players, nil
 }

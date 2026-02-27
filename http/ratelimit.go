@@ -9,40 +9,60 @@ import (
 	"golang.org/x/time/rate"
 )
 
+type ipLimiter struct {
+	limiter  *rate.Limiter
+	lastSeen time.Time
+}
+
 type RateLimiter struct {
-	limiters map[string]*rate.Limiter
-	mu       sync.RWMutex
+	limiters map[string]*ipLimiter
+	mu       sync.Mutex
 	rate     rate.Limit
 	burst    int
 }
 
 func NewRateLimiter(r rate.Limit, b int) *RateLimiter {
-	return &RateLimiter{
-		limiters: make(map[string]*rate.Limiter),
+	rl := &RateLimiter{
+		limiters: make(map[string]*ipLimiter),
 		rate:     r,
 		burst:    b,
 	}
+
+	go rl.cleanupLoop()
+
+	return rl
 }
 
 func (rl *RateLimiter) getLimiter(ip string) *rate.Limiter {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 
-	limiter, exists := rl.limiters[ip]
+	entry, exists := rl.limiters[ip]
 	if !exists {
-		limiter = rate.NewLimiter(rl.rate, rl.burst)
-		rl.limiters[ip] = limiter
-
-		// Cleanup old limiters after 10 minutes of inactivity
-		go func() {
-			time.Sleep(10 * time.Minute)
-			rl.mu.Lock()
-			delete(rl.limiters, ip)
-			rl.mu.Unlock()
-		}()
+		entry = &ipLimiter{
+			limiter: rate.NewLimiter(rl.rate, rl.burst),
+		}
+		rl.limiters[ip] = entry
 	}
+	entry.lastSeen = time.Now()
 
-	return limiter
+	return entry.limiter
+}
+
+func (rl *RateLimiter) cleanupLoop() {
+	ticker := time.NewTicker(10 * time.Minute)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		rl.mu.Lock()
+		cutoff := time.Now().Add(-10 * time.Minute)
+		for ip, entry := range rl.limiters {
+			if entry.lastSeen.Before(cutoff) {
+				delete(rl.limiters, ip)
+			}
+		}
+		rl.mu.Unlock()
+	}
 }
 
 func (rl *RateLimiter) Middleware(next http.Handler) http.Handler {
@@ -60,22 +80,8 @@ func (rl *RateLimiter) Middleware(next http.Handler) http.Handler {
 }
 
 func getIP(r *http.Request) string {
-	// Try to get real IP from X-Forwarded-For or X-Real-IP headers
-	forwarded := r.Header.Get("X-Forwarded-For")
-	if forwarded != "" {
-		// X-Forwarded-For can contain multiple IPs, get the first one
-		if ip, _, err := net.SplitHostPort(forwarded); err == nil {
-			return ip
-		}
-		return forwarded
-	}
-
-	realIP := r.Header.Get("X-Real-IP")
-	if realIP != "" {
-		return realIP
-	}
-
-	// Fall back to RemoteAddr
+	// Only trust RemoteAddr — X-Forwarded-For and X-Real-IP are trivially
+	// spoofable without a trusted reverse proxy in front of this server.
 	ip, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		return r.RemoteAddr

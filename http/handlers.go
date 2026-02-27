@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/gorilla/csrf"
 	"github.com/gorilla/mux"
 	"github.com/gorilla/websocket"
 )
@@ -44,28 +43,16 @@ func NewHandlers(authService *auth.Service, lobby *game.Lobby, engine *game.Engi
 	}
 }
 
-// CSRF token handler
-func (h *Handlers) GetCSRFToken(w http.ResponseWriter, r *http.Request) {
-	token := csrf.Token(r)
-	log.Printf("CSRF token generated: %s (len=%d)", token[:min(20, len(token))], len(token))
-
+func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{
-		"csrfToken": token,
-	})
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
+	w.WriteHeader(status)
+	if err := json.NewEncoder(w).Encode(v); err != nil {
+		log.Printf("Failed to write JSON response: %v", err)
 	}
-	return b
 }
 
 // Auth handlers
 func (h *Handlers) Register(w http.ResponseWriter, r *http.Request) {
-	log.Printf("Register request received with CSRF header: %s", r.Header.Get("X-CSRF-Token")[:min(20, len(r.Header.Get("X-CSRF-Token")))])
-
 	var req struct {
 		Username string `json:"username"`
 		Password string `json:"password"`
@@ -77,12 +64,17 @@ func (h *Handlers) Register(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.authService.Register(req.Username, req.Password); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		switch err {
+		case auth.ErrInvalidUsername, auth.ErrInvalidPassword, auth.ErrUserExists:
+			http.Error(w, err.Error(), http.StatusBadRequest)
+		default:
+			log.Printf("Register error: %v", err)
+			http.Error(w, "Registration failed", http.StatusInternalServerError)
+		}
 		return
 	}
 
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(map[string]string{"message": "User registered successfully"})
+	writeJSON(w, http.StatusCreated, map[string]string{"message": "User registered successfully"})
 }
 
 func (h *Handlers) Login(w http.ResponseWriter, r *http.Request) {
@@ -98,7 +90,12 @@ func (h *Handlers) Login(w http.ResponseWriter, r *http.Request) {
 
 	sessionID, err := h.authService.Login(req.Username, req.Password)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusUnauthorized)
+		if err == auth.ErrInvalidCredentials {
+			http.Error(w, err.Error(), http.StatusUnauthorized)
+		} else {
+			log.Printf("Login error: %v", err)
+			http.Error(w, "Login failed", http.StatusInternalServerError)
+		}
 		return
 	}
 
@@ -106,15 +103,18 @@ func (h *Handlers) Login(w http.ResponseWriter, r *http.Request) {
 
 	user, err := h.store.GetUserByUsername(req.Username)
 	if err != nil {
+		log.Printf("Login: Failed to get user info for %s: %v", req.Username, err)
 		http.Error(w, "Failed to get user info", http.StatusInternalServerError)
 		return
 	}
 	if user == nil {
+		log.Printf("Login: User not found after successful auth: %s", req.Username)
 		http.Error(w, "User not found", http.StatusNotFound)
 		return
 	}
 
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	log.Printf("Login successful for user %s (ID: %d)", user.Username, user.ID)
+	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"message":  "Login successful",
 		"userId":   user.ID,
 		"username": user.Username,
@@ -128,19 +128,19 @@ func (h *Handlers) Logout(w http.ResponseWriter, r *http.Request) {
 		h.authService.GetSessionManager().ClearSessionCookie(w)
 	}
 
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]string{"message": "Logged out successfully"})
+	writeJSON(w, http.StatusOK, map[string]string{"message": "Logged out successfully"})
 }
 
 // Lobby handlers
 func (h *Handlers) ListGames(w http.ResponseWriter, r *http.Request) {
 	games, err := h.lobby.ListGames()
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		log.Printf("ListGames error: %v", err)
+		http.Error(w, "Failed to list games", http.StatusInternalServerError)
 		return
 	}
 
-	json.NewEncoder(w).Encode(games)
+	writeJSON(w, http.StatusOK, games)
 }
 
 func (h *Handlers) CreateGame(w http.ResponseWriter, r *http.Request) {
@@ -154,12 +154,12 @@ func (h *Handlers) CreateGame(w http.ResponseWriter, r *http.Request) {
 
 	gameID, err := h.lobby.CreateGame(req.MaxPlayers)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		log.Printf("CreateGame error: %v", err)
+		http.Error(w, "Failed to create game", http.StatusInternalServerError)
 		return
 	}
 
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	writeJSON(w, http.StatusCreated, map[string]interface{}{
 		"gameId": gameID,
 	})
 }
@@ -191,15 +191,24 @@ func (h *Handlers) JoinGame(w http.ResponseWriter, r *http.Request) {
 
 	event, err := h.engine.JoinGame(gameID, userID, user.Username)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		switch err {
+		case game.ErrGameFull, game.ErrGameStarted, game.ErrAlreadyInGame, game.ErrGameNotFound:
+			http.Error(w, err.Error(), http.StatusBadRequest)
+		default:
+			log.Printf("JoinGame error: %v", err)
+			http.Error(w, "Failed to join game", http.StatusInternalServerError)
+		}
 		return
 	}
 
 	// Broadcast to WebSocket room
 	room := h.wsManager.GetRoom(gameID)
-	room.Broadcast(event)
+	room.Broadcast(ws.OutgoingMessage{
+		Type:    event.Type,
+		Payload: event.Payload,
+	})
 
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"message": "Joined game successfully",
 		"gameId":  gameID,
 	})
@@ -215,7 +224,8 @@ func (h *Handlers) GetGame(w http.ResponseWriter, r *http.Request) {
 
 	gameState, err := h.lobby.GetGame(gameID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		log.Printf("GetGame error: %v", err)
+		http.Error(w, "Failed to get game", http.StatusInternalServerError)
 		return
 	}
 
@@ -224,7 +234,7 @@ func (h *Handlers) GetGame(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	json.NewEncoder(w).Encode(gameState)
+	writeJSON(w, http.StatusOK, gameState)
 }
 
 // WebSocket handler

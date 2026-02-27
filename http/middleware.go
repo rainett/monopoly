@@ -26,18 +26,14 @@ func CORSMiddleware(next http.Handler) http.Handler {
 		origin := r.Header.Get("Origin")
 
 		// Allow same-origin requests
-		// In production, maintain an allowlist of origins
 		if origin != "" {
-			// Check if origin matches our host
 			if origin == "http://"+r.Host || origin == "https://"+r.Host {
 				w.Header().Set("Access-Control-Allow-Origin", origin)
 				w.Header().Set("Access-Control-Allow-Credentials", "true")
+				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+				w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 			}
 		}
-
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-		// Include X-CSRF-Token for CSRF protection
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, X-CSRF-Token")
 
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(http.StatusOK)

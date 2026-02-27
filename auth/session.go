@@ -16,23 +16,17 @@ type Session struct {
 type SessionManager struct {
 	sessions map[string]*Session
 	mu       sync.RWMutex
-	csrfKey  string
 }
 
 func NewSessionManager(secret string) *SessionManager {
 	sm := &SessionManager{
 		sessions: make(map[string]*Session),
-		csrfKey:  secret, // Use session secret as CSRF key
 	}
 
 	// Start cleanup goroutine
 	go sm.cleanupExpiredSessions()
 
 	return sm
-}
-
-func (sm *SessionManager) GetCSRFKey() string {
-	return sm.csrfKey
 }
 
 func (sm *SessionManager) CreateSession(userID int64) (string, error) {

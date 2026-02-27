@@ -104,21 +104,16 @@ func (m *Manager) writePump(client *Client) {
 				return
 			}
 
-			w, err := client.conn.NextWriter(websocket.TextMessage)
-			if err != nil {
+			if err := client.conn.WriteMessage(websocket.TextMessage, message); err != nil {
 				return
 			}
-			w.Write(message)
 
-			// Add queued messages to current websocket message
+			// Send any queued messages, each as its own frame
 			n := len(client.send)
 			for i := 0; i < n; i++ {
-				w.Write([]byte{'\n'})
-				w.Write(<-client.send)
-			}
-
-			if err := w.Close(); err != nil {
-				return
+				if err := client.conn.WriteMessage(websocket.TextMessage, <-client.send); err != nil {
+					return
+				}
 			}
 
 		case <-ticker.C:

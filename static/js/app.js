@@ -11,21 +11,8 @@ class App {
         this.container = document.getElementById('app');
         this.currentView = null;
 
-        // Setup routes immediately (synchronously)
         this.setupRoutes();
         this.setupAuthCheck();
-
-        // Fetch CSRF token in background (don't block initialization)
-        this.init();
-    }
-
-    async init() {
-        // Fetch CSRF token early in background
-        try {
-            await api.fetchCSRFToken();
-        } catch (error) {
-            console.warn('Could not fetch CSRF token on init:', error);
-        }
     }
 
     setupRoutes() {
