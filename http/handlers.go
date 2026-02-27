@@ -26,20 +26,22 @@ var upgrader = websocket.Upgrader{
 }
 
 type Handlers struct {
-	authService *auth.Service
-	lobby       *game.Lobby
-	engine      *game.Engine
-	wsManager   *ws.Manager
-	store       store.Store
+	authService   *auth.Service
+	lobby         *game.Lobby
+	engine        *game.Engine
+	wsManager     *ws.Manager
+	lobbyManager  *ws.LobbyManager
+	store         store.Store
 }
 
-func NewHandlers(authService *auth.Service, lobby *game.Lobby, engine *game.Engine, wsManager *ws.Manager, store store.Store) *Handlers {
+func NewHandlers(authService *auth.Service, lobby *game.Lobby, engine *game.Engine, wsManager *ws.Manager, lobbyManager *ws.LobbyManager, store store.Store) *Handlers {
 	return &Handlers{
-		authService: authService,
-		lobby:       lobby,
-		engine:      engine,
-		wsManager:   wsManager,
-		store:       store,
+		authService:  authService,
+		lobby:        lobby,
+		engine:       engine,
+		wsManager:    wsManager,
+		lobbyManager: lobbyManager,
+		store:        store,
 	}
 }
 
@@ -49,6 +51,16 @@ func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 	if err := json.NewEncoder(w).Encode(v); err != nil {
 		log.Printf("Failed to write JSON response: %v", err)
 	}
+}
+
+// broadcastLobbyUpdate fetches current games and broadcasts to all lobby clients
+func (h *Handlers) broadcastLobbyUpdate() {
+	games, err := h.lobby.ListGames()
+	if err != nil {
+		log.Printf("Failed to list games for broadcast: %v", err)
+		return
+	}
+	h.lobbyManager.BroadcastUpdate(games)
 }
 
 // Auth handlers
@@ -159,6 +171,9 @@ func (h *Handlers) CreateGame(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Broadcast lobby update to all connected clients
+	go h.broadcastLobbyUpdate()
+
 	writeJSON(w, http.StatusCreated, map[string]interface{}{
 		"gameId": gameID,
 	})
@@ -208,6 +223,9 @@ func (h *Handlers) JoinGame(w http.ResponseWriter, r *http.Request) {
 		Payload: event.Payload,
 	})
 
+	// Broadcast lobby update to all connected clients
+	go h.broadcastLobbyUpdate()
+
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"message": "Joined game successfully",
 		"gameId":  gameID,
@@ -237,7 +255,7 @@ func (h *Handlers) GetGame(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, gameState)
 }
 
-// WebSocket handler
+// WebSocket handler for game rooms
 func (h *Handlers) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	gameID, err := strconv.ParseInt(vars["gameId"], 10, 64)
@@ -259,4 +277,21 @@ func (h *Handlers) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.wsManager.HandleConnection(conn, gameID, userID)
+}
+
+// WebSocket handler for lobby
+func (h *Handlers) HandleLobbyWebSocket(w http.ResponseWriter, r *http.Request) {
+	userID, ok := GetUserIDFromContext(r.Context())
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		log.Printf("Lobby WebSocket upgrade error: %v", err)
+		return
+	}
+
+	h.lobbyManager.HandleConnection(conn, userID)
 }

@@ -15,16 +15,20 @@ export async function render(container, router) {
         const password = container.querySelector('#password').value;
 
         errorDiv.textContent = '';
+        errorDiv.style.display = 'none';
         successDiv.textContent = '';
+        successDiv.style.display = 'none';
 
         try {
             await api.register(username, password);
             successDiv.textContent = 'Account created! Redirecting...';
+            successDiv.style.display = 'block';
             setTimeout(() => {
                 router.navigate('/login');
             }, 1500);
         } catch (error) {
             errorDiv.textContent = error.message || 'Registration failed';
+            errorDiv.style.display = 'block';
         }
     });
 }

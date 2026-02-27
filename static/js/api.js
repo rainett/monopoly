@@ -25,8 +25,14 @@ class ApiClient {
             clearTimeout(timeoutId);
 
             if (response.status === 401) {
-                this.handleUnauthorized();
-                throw new Error('Unauthorized');
+                // Don't redirect on login/register endpoints, just return the error
+                if (endpoint !== '/api/auth/login' && endpoint !== '/api/auth/register') {
+                    this.handleUnauthorized();
+                    throw new Error('Unauthorized');
+                }
+                // For login/register, get the actual error message
+                const errorText = await response.text();
+                throw new Error(errorText || 'Invalid credentials');
             }
 
             if (!response.ok) {
@@ -118,9 +124,13 @@ class ApiClient {
         });
     }
 
-    getWebSocketURL(gameId) {
+    getWebSocketURL(target) {
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        return `${protocol}//${window.location.host}/ws/game/${gameId}`;
+        if (target === 'lobby') {
+            return `${protocol}//${window.location.host}/ws/lobby`;
+        }
+        // Assume target is a gameId
+        return `${protocol}//${window.location.host}/ws/game/${target}`;
     }
 
     isAuthenticated() {

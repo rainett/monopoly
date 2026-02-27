@@ -14,12 +14,14 @@ export async function render(container, router) {
         const password = container.querySelector('#password').value;
 
         errorDiv.textContent = '';
+        errorDiv.style.display = 'none';
 
         try {
             await api.login(username, password);
             router.navigate('/lobby');
         } catch (error) {
             errorDiv.textContent = error.message || 'Login failed';
+            errorDiv.style.display = 'block';
         }
     });
 }

@@ -16,9 +16,9 @@ type Server struct {
 	handlers *Handlers
 }
 
-func NewServer(authService *auth.Service, lobby *game.Lobby, engine *game.Engine, wsManager *ws.Manager, store store.Store) *Server {
+func NewServer(authService *auth.Service, lobby *game.Lobby, engine *game.Engine, wsManager *ws.Manager, lobbyManager *ws.LobbyManager, store store.Store) *Server {
 	router := mux.NewRouter()
-	handlers := NewHandlers(authService, lobby, engine, wsManager, store)
+	handlers := NewHandlers(authService, lobby, engine, wsManager, lobbyManager, store)
 
 	server := &Server{
 		router:   router,
@@ -57,9 +57,10 @@ func (s *Server) setupRoutes(authService *auth.Service) {
 	protected.HandleFunc("/lobby/join/{gameId}", s.handlers.JoinGame).Methods("POST")
 	protected.HandleFunc("/lobby/games/{gameId}", s.handlers.GetGame).Methods("GET")
 
-	// WebSocket route (protected)
+	// WebSocket routes (protected)
 	wsRouter := s.router.PathPrefix("/ws").Subrouter()
 	wsRouter.Use(AuthMiddleware(authService))
+	wsRouter.HandleFunc("/lobby", s.handlers.HandleLobbyWebSocket)
 	wsRouter.HandleFunc("/game/{gameId}", s.handlers.HandleWebSocket)
 
 	// Catch-all for unmatched API routes — return JSON 404 instead of SPA HTML

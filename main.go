@@ -32,14 +32,15 @@ func main() {
 	log.Println("Database initialized successfully")
 
 	// Initialize services
-	sessionManager := auth.NewSessionManager(cfg.SessionSecret)
+	sessionManager := auth.NewSessionManager()
 	authService := auth.NewService(db, sessionManager)
 	lobby := game.NewLobby(db)
 	engine := game.NewEngine(db)
 	wsManager := ws.NewManager(engine)
+	lobbyManager := ws.NewLobbyManager()
 
 	// Initialize HTTP server
-	server := httpserver.NewServer(authService, lobby, engine, wsManager, db)
+	server := httpserver.NewServer(authService, lobby, engine, wsManager, lobbyManager, db)
 	srv := server.GetHTTPServer(cfg.ServerPort)
 
 	// Start server in a goroutine

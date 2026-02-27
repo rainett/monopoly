@@ -11,7 +11,10 @@
       "Bash(go test:*)",
       "Bash(tasklist:*)",
       "Bash(netstat:*)",
-      "Bash(chmod:*)"
+      "Bash(chmod:*)",
+      "Bash(findstr:*)",
+      "Bash(ping:*)",
+      "Bash(del:*)"
     ]
   }
 }
