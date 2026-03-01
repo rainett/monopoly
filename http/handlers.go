@@ -2,6 +2,7 @@ package http
 
 import (
 	"encoding/json"
+	"errors"
 	"log"
 	"monopoly/auth"
 	"monopoly/game"
@@ -26,22 +27,22 @@ var upgrader = websocket.Upgrader{
 }
 
 type Handlers struct {
-	authService   *auth.Service
-	lobby         *game.Lobby
-	engine        *game.Engine
-	wsManager     *ws.Manager
-	lobbyManager  *ws.LobbyManager
-	store         store.Store
+	authService  *auth.Service
+	authStore    store.AuthStore
+	lobby        *game.Lobby
+	engine       *game.Engine
+	wsManager    *ws.Manager
+	lobbyManager *ws.LobbyManager
 }
 
-func NewHandlers(authService *auth.Service, lobby *game.Lobby, engine *game.Engine, wsManager *ws.Manager, lobbyManager *ws.LobbyManager, store store.Store) *Handlers {
+func NewHandlers(authService *auth.Service, authStore store.AuthStore, lobby *game.Lobby, engine *game.Engine, wsManager *ws.Manager, lobbyManager *ws.LobbyManager) *Handlers {
 	return &Handlers{
 		authService:  authService,
+		authStore:    authStore,
 		lobby:        lobby,
 		engine:       engine,
 		wsManager:    wsManager,
 		lobbyManager: lobbyManager,
-		store:        store,
 	}
 }
 
@@ -53,9 +54,25 @@ func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 	}
 }
 
+// getUserOrError retrieves a user by ID and writes an HTTP error if not found
+func (h *Handlers) getUserOrError(w http.ResponseWriter, userID int64) (*store.User, bool) {
+	user, err := h.authStore.GetUserByID(userID)
+	if err != nil {
+		log.Printf("Failed to get user info for ID %d: %v", userID, err)
+		http.Error(w, "Failed to get user info", http.StatusInternalServerError)
+		return nil, false
+	}
+	if user == nil {
+		log.Printf("User not found after auth: ID %d", userID)
+		http.Error(w, "User not found", http.StatusNotFound)
+		return nil, false
+	}
+	return user, true
+}
+
 // broadcastLobbyUpdate fetches current games and broadcasts to all lobby clients
 func (h *Handlers) broadcastLobbyUpdate() {
-	games, err := h.lobby.ListGames()
+	games, err := h.lobby.ListGames(0) // 0 = no specific user context for broadcast
 	if err != nil {
 		log.Printf("Failed to list games for broadcast: %v", err)
 		return
@@ -63,7 +80,7 @@ func (h *Handlers) broadcastLobbyUpdate() {
 	h.lobbyManager.BroadcastUpdate(games)
 }
 
-// Auth handlers
+// Register Auth handlers
 func (h *Handlers) Register(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Username string `json:"username"`
@@ -76,8 +93,8 @@ func (h *Handlers) Register(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.authService.Register(req.Username, req.Password); err != nil {
-		switch err {
-		case auth.ErrInvalidUsername, auth.ErrInvalidPassword, auth.ErrUserExists:
+		switch {
+		case errors.Is(err, auth.ErrInvalidUsername), errors.Is(err, auth.ErrInvalidPassword), errors.Is(err, auth.ErrUserExists):
 			http.Error(w, err.Error(), http.StatusBadRequest)
 		default:
 			log.Printf("Register error: %v", err)
@@ -113,7 +130,7 @@ func (h *Handlers) Login(w http.ResponseWriter, r *http.Request) {
 
 	h.authService.GetSessionManager().SetSessionCookie(w, sessionID)
 
-	user, err := h.store.GetUserByUsername(req.Username)
+	user, err := h.authStore.GetUserByUsername(req.Username)
 	if err != nil {
 		log.Printf("Login: Failed to get user info for %s: %v", req.Username, err)
 		http.Error(w, "Failed to get user info", http.StatusInternalServerError)
@@ -143,9 +160,15 @@ func (h *Handlers) Logout(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"message": "Logged out successfully"})
 }
 
-// Lobby handlers
+// ListGames returns a list of active games
 func (h *Handlers) ListGames(w http.ResponseWriter, r *http.Request) {
-	games, err := h.lobby.ListGames()
+	userID, ok := GetUserIDFromContext(r.Context())
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	games, err := h.lobby.ListGames(userID)
 	if err != nil {
 		log.Printf("ListGames error: %v", err)
 		http.Error(w, "Failed to list games", http.StatusInternalServerError)
@@ -164,7 +187,18 @@ func (h *Handlers) CreateGame(w http.ResponseWriter, r *http.Request) {
 		req.MaxPlayers = 4 // default
 	}
 
-	gameID, err := h.lobby.CreateGame(req.MaxPlayers)
+	userID, ok := GetUserIDFromContext(r.Context())
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	user, ok := h.getUserOrError(w, userID)
+	if !ok {
+		return
+	}
+
+	game, err := h.lobby.CreateGame(req.MaxPlayers, userID, user.Username)
 	if err != nil {
 		log.Printf("CreateGame error: %v", err)
 		http.Error(w, "Failed to create game", http.StatusInternalServerError)
@@ -174,9 +208,7 @@ func (h *Handlers) CreateGame(w http.ResponseWriter, r *http.Request) {
 	// Broadcast lobby update to all connected clients
 	go h.broadcastLobbyUpdate()
 
-	writeJSON(w, http.StatusCreated, map[string]interface{}{
-		"gameId": gameID,
-	})
+	writeJSON(w, http.StatusCreated, game)
 }
 
 func (h *Handlers) JoinGame(w http.ResponseWriter, r *http.Request) {
@@ -193,35 +225,17 @@ func (h *Handlers) JoinGame(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get username
-	user, err := h.store.GetUserByID(userID)
-	if err != nil {
-		http.Error(w, "Failed to get user info", http.StatusInternalServerError)
-		return
-	}
-	if user == nil {
-		http.Error(w, "User not found", http.StatusNotFound)
+	user, ok := h.getUserOrError(w, userID)
+	if !ok {
 		return
 	}
 
-	event, err := h.engine.JoinGame(gameID, userID, user.Username)
+	// Join game using lobby store
+	err = h.lobby.JoinGame(gameID, userID, user.Username)
 	if err != nil {
-		switch err {
-		case game.ErrGameFull, game.ErrGameStarted, game.ErrAlreadyInGame, game.ErrGameNotFound:
-			http.Error(w, err.Error(), http.StatusBadRequest)
-		default:
-			log.Printf("JoinGame error: %v", err)
-			http.Error(w, "Failed to join game", http.StatusInternalServerError)
-		}
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-
-	// Broadcast to WebSocket room
-	room := h.wsManager.GetRoom(gameID)
-	room.Broadcast(ws.OutgoingMessage{
-		Type:    event.Type,
-		Payload: event.Payload,
-	})
 
 	// Broadcast lobby update to all connected clients
 	go h.broadcastLobbyUpdate()
@@ -229,6 +243,34 @@ func (h *Handlers) JoinGame(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"message": "Joined game successfully",
 		"gameId":  gameID,
+	})
+}
+
+func (h *Handlers) LeaveGame(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	gameID, err := strconv.ParseInt(vars["gameId"], 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid game ID", http.StatusBadRequest)
+		return
+	}
+
+	userID, ok := GetUserIDFromContext(r.Context())
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	err = h.lobby.LeaveGame(gameID, userID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// Broadcast lobby update to all connected clients
+	go h.broadcastLobbyUpdate()
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"message": "Left game successfully",
 	})
 }
 
@@ -240,7 +282,7 @@ func (h *Handlers) GetGame(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	gameState, err := h.lobby.GetGame(gameID)
+	gameState, err := h.engine.GetGameState(gameID)
 	if err != nil {
 		log.Printf("GetGame error: %v", err)
 		http.Error(w, "Failed to get game", http.StatusInternalServerError)

@@ -28,4 +28,6 @@ CREATE TABLE IF NOT EXISTS game_players (
 
 CREATE INDEX IF NOT EXISTS idx_games_status ON games(status);
 CREATE INDEX IF NOT EXISTS idx_game_players_game_id ON game_players(game_id);
+CREATE INDEX IF NOT EXISTS idx_game_players_user_id ON game_players(user_id);
+CREATE INDEX IF NOT EXISTS idx_game_players_current_turn ON game_players(game_id, is_current_turn);
 `

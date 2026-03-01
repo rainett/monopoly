@@ -24,23 +24,28 @@ func main() {
 	log.Printf("Configuration loaded - Server port: %s, DB path: %s", cfg.ServerPort, cfg.DBPath)
 
 	// Initialize database
-	db, err := store.NewSQLiteStore(cfg.DBPath)
+	db, err := store.InitDB(cfg.DBPath, cfg.MaxOpenConns, cfg.MaxIdleConns)
 	if err != nil {
 		log.Fatalf("Failed to initialize database: %v", err)
 	}
 	defer db.Close()
 	log.Println("Database initialized successfully")
 
+	// Initialize stores
+	lobbyStore := store.NewSQLiteLobbyStore(db)
+	authStore := store.NewAuthStore(db)
+	gameStore := store.NewGameStore(db)
+
 	// Initialize services
 	sessionManager := auth.NewSessionManager()
-	authService := auth.NewService(db, sessionManager)
-	lobby := game.NewLobby(db)
-	engine := game.NewEngine(db)
+	authService := auth.NewService(authStore, sessionManager)
+	lobby := game.NewLobby(lobbyStore)
+	engine := game.NewEngine(gameStore)
 	wsManager := ws.NewManager(engine)
 	lobbyManager := ws.NewLobbyManager()
 
 	// Initialize HTTP server
-	server := httpserver.NewServer(authService, lobby, engine, wsManager, lobbyManager, db)
+	server := httpserver.NewServer(authService, authStore, lobby, engine, wsManager, lobbyManager)
 	srv := server.GetHTTPServer(cfg.ServerPort)
 
 	// Start server in a goroutine

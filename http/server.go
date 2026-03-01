@@ -16,9 +16,9 @@ type Server struct {
 	handlers *Handlers
 }
 
-func NewServer(authService *auth.Service, lobby *game.Lobby, engine *game.Engine, wsManager *ws.Manager, lobbyManager *ws.LobbyManager, store store.Store) *Server {
+func NewServer(authService *auth.Service, authStore store.AuthStore, lobby *game.Lobby, engine *game.Engine, wsManager *ws.Manager, lobbyManager *ws.LobbyManager) *Server {
 	router := mux.NewRouter()
-	handlers := NewHandlers(authService, lobby, engine, wsManager, lobbyManager, store)
+	handlers := NewHandlers(authService, authStore, lobby, engine, wsManager, lobbyManager)
 
 	server := &Server{
 		router:   router,
@@ -55,6 +55,7 @@ func (s *Server) setupRoutes(authService *auth.Service) {
 	protected.HandleFunc("/lobby/games", s.handlers.ListGames).Methods("GET")
 	protected.HandleFunc("/lobby/create", s.handlers.CreateGame).Methods("POST")
 	protected.HandleFunc("/lobby/join/{gameId}", s.handlers.JoinGame).Methods("POST")
+	protected.HandleFunc("/lobby/leave/{gameId}", s.handlers.LeaveGame).Methods("POST")
 	protected.HandleFunc("/lobby/games/{gameId}", s.handlers.GetGame).Methods("GET")
 
 	// WebSocket routes (protected)

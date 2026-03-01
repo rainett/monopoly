@@ -10,6 +10,8 @@ type Config struct {
 	ServerPort    string
 	DBPath        string
 	SessionSecret string
+	MaxOpenConns  int
+	MaxIdleConns  int
 }
 
 func Load() *Config {
@@ -19,6 +21,8 @@ func Load() *Config {
 		ServerPort:    ":8080",
 		DBPath:        "./monopoly.db",
 		SessionSecret: secret,
+		MaxOpenConns:  25,
+		MaxIdleConns:  5,
 	}
 }
 

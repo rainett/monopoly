@@ -17,11 +17,11 @@ var (
 )
 
 type Service struct {
-	store   store.Store
+	store   store.AuthStore
 	session *SessionManager
 }
 
-func NewService(store store.Store, sessionManager *SessionManager) *Service {
+func NewService(store store.AuthStore, sessionManager *SessionManager) *Service {
 	return &Service{
 		store:   store,
 		session: sessionManager,
@@ -29,13 +29,10 @@ func NewService(store store.Store, sessionManager *SessionManager) *Service {
 }
 
 func (s *Service) Register(username, password string) error {
-	// Sanitize username to prevent XSS
-	username = SanitizeUsername(username)
-
+	username = SanitizeString(username)
 	if err := validateUsername(username); err != nil {
 		return err
 	}
-
 	if err := validatePassword(password); err != nil {
 		return err
 	}
@@ -62,8 +59,7 @@ func (s *Service) Register(username, password string) error {
 }
 
 func (s *Service) Login(username, password string) (string, error) {
-	// Sanitize username to prevent XSS
-	username = SanitizeUsername(username)
+	username = SanitizeString(username)
 
 	user, err := s.store.GetUserByUsername(username)
 	if err != nil {

@@ -8,6 +8,12 @@ import (
 	"time"
 )
 
+const (
+	sessionDuration        = 7 * 24 * time.Hour // 7 days
+	sessionCleanupInterval = 1 * time.Hour
+	sessionIDByteLength    = 32
+)
+
 type Session struct {
 	UserID    int64
 	ExpiresAt time.Time
@@ -22,10 +28,7 @@ func NewSessionManager() *SessionManager {
 	sm := &SessionManager{
 		sessions: make(map[string]*Session),
 	}
-
-	// Start cleanup goroutine
 	go sm.cleanupExpiredSessions()
-
 	return sm
 }
 
@@ -38,7 +41,7 @@ func (sm *SessionManager) CreateSession(userID int64) (string, error) {
 	sm.mu.Lock()
 	sm.sessions[sessionID] = &Session{
 		UserID:    userID,
-		ExpiresAt: time.Now().Add(7 * 24 * time.Hour), // 7 days
+		ExpiresAt: time.Now().Add(sessionDuration),
 	}
 	sm.mu.Unlock()
 
@@ -75,7 +78,7 @@ func (sm *SessionManager) SetSessionCookie(w http.ResponseWriter, sessionID stri
 		Name:     "session_id",
 		Value:    sessionID,
 		Path:     "/",
-		MaxAge:   7 * 24 * 60 * 60, // 7 days
+		MaxAge:   int(sessionDuration.Seconds()),
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
 		// Secure: true, // Enable in production with HTTPS
@@ -103,7 +106,7 @@ func GetSessionFromRequest(r *http.Request) string {
 }
 
 func (sm *SessionManager) cleanupExpiredSessions() {
-	ticker := time.NewTicker(1 * time.Hour)
+	ticker := time.NewTicker(sessionCleanupInterval)
 	defer ticker.Stop()
 
 	for range ticker.C {
@@ -119,7 +122,7 @@ func (sm *SessionManager) cleanupExpiredSessions() {
 }
 
 func generateSessionID() (string, error) {
-	bytes := make([]byte, 32)
+	bytes := make([]byte, sessionIDByteLength)
 	if _, err := rand.Read(bytes); err != nil {
 		return "", err
 	}

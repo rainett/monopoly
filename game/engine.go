@@ -17,10 +17,10 @@ var (
 )
 
 type Engine struct {
-	store store.Store
+	store store.GameStore
 }
 
-func NewEngine(store store.Store) *Engine {
+func NewEngine(store store.GameStore) *Engine {
 	return &Engine{store: store}
 }
 

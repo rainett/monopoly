@@ -124,6 +124,12 @@ class ApiClient {
         });
     }
 
+    async leaveGame(gameId) {
+        return this.request(`/api/lobby/leave/${gameId}`, {
+            method: 'POST',
+        });
+    }
+
     getWebSocketURL(target) {
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         if (target === 'lobby') {

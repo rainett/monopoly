@@ -4,99 +4,70 @@ import (
 	"monopoly/store"
 )
 
+const (
+	minPlayersPerGame = 2
+	maxPlayersPerGame = 8
+)
+
 type Lobby struct {
-	store store.Store
+	store store.LobbyStore
 }
 
-func NewLobby(store store.Store) *Lobby {
+func NewLobby(store store.LobbyStore) *Lobby {
 	return &Lobby{store: store}
 }
 
-func (l *Lobby) CreateGame(maxPlayers int) (int64, error) {
-	if maxPlayers < 2 {
-		maxPlayers = 2
+// CreateGame creates a new game and automatically joins the creator
+func (l *Lobby) CreateGame(maxPlayers int, userID int64, username string) (*store.LobbyGameDTO, error) {
+	if maxPlayers < minPlayersPerGame {
+		maxPlayers = minPlayersPerGame
 	}
-	if maxPlayers > 8 {
-		maxPlayers = 8
+	if maxPlayers > maxPlayersPerGame {
+		maxPlayers = maxPlayersPerGame
 	}
 
 	gameID, err := l.store.CreateGame(maxPlayers)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 
-	return gameID, nil
-}
-
-func (l *Lobby) ListGames() ([]*GameState, error) {
-	games, err := l.store.ListGames()
+	// Automatically join the creator
+	err = l.store.JoinGame(gameID, userID, username)
 	if err != nil {
 		return nil, err
 	}
 
-	gameStates := make([]*GameState, 0, len(games))
-	for _, game := range games {
-		players, err := l.store.GetGamePlayers(game.ID)
-		if err != nil {
-			return nil, err
-		}
-
-		gamePlayers := make([]*Player, len(players))
-		for i, p := range players {
-			gamePlayers[i] = &Player{
-				UserID:        p.UserID,
-				Username:      p.Username,
-				Order:         p.PlayerOrder,
-				IsReady:       p.IsReady,
-				IsCurrentTurn: p.IsCurrentTurn,
-			}
-		}
-
-		gameStates = append(gameStates, &GameState{
-			ID:         game.ID,
-			Status:     game.Status,
-			Players:    gamePlayers,
-			MaxPlayers: game.MaxPlayers,
-		})
-	}
-
-	return gameStates, nil
-}
-
-func (l *Lobby) GetGame(gameID int64) (*GameState, error) {
-	game, err := l.store.GetGame(gameID)
-	if err != nil {
-		return nil, err
-	}
-	if game == nil {
-		return nil, nil
-	}
-
-	players, err := l.store.GetGamePlayers(gameID)
-	if err != nil {
-		return nil, err
-	}
-
-	gamePlayers := make([]*Player, len(players))
-	var currentPlayerID int64
-	for i, p := range players {
-		gamePlayers[i] = &Player{
-			UserID:        p.UserID,
-			Username:      p.Username,
-			Order:         p.PlayerOrder,
-			IsReady:       p.IsReady,
-			IsCurrentTurn: p.IsCurrentTurn,
-		}
-		if p.IsCurrentTurn {
-			currentPlayerID = p.UserID
-		}
-	}
-
-	return &GameState{
-		ID:              game.ID,
-		Status:          game.Status,
-		Players:         gamePlayers,
-		CurrentPlayerID: currentPlayerID,
-		MaxPlayers:      game.MaxPlayers,
+	// Return the created game with the creator as a player
+	return &store.LobbyGameDTO{
+		ID:         gameID,
+		Status:     "waiting",
+		MaxPlayers: maxPlayers,
+		Players: []store.LobbyPlayerDTO{
+			{
+				UserID:   userID,
+				Username: username,
+			},
+		},
+		IsJoined: true,
 	}, nil
+}
+
+func (l *Lobby) ListGames(userID int64) ([]*store.LobbyGameDTO, error) {
+	games, err := l.store.ListGames(userID)
+	if err != nil {
+		return nil, err
+	}
+	return games, nil
+}
+
+func (l *Lobby) JoinGame(gameID, userID int64, username string) error {
+	return l.store.JoinGame(gameID, userID, username)
+}
+
+func (l *Lobby) LeaveGame(gameID, userID int64) error {
+	return l.store.LeaveGame(gameID, userID)
+}
+
+func (l *Lobby) GetUserCurrentGame(userID int64) (*store.LobbyGameDTO, error) {
+	return l.store.GetUserCurrentGame(userID)
 }

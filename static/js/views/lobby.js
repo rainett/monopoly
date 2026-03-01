@@ -117,45 +117,53 @@ function displayGames(container, games, router) {
     }
 
     gamesListDiv.innerHTML = games.map(game => `
-        <div class="game-item">
+        <div class="game-item ${game.isJoined ? 'current-game' : ''}" data-game-id="${game.id}">
             <div class="game-info">
                 <div class="game-name">GAME #${game.id}</div>
                 <div class="game-meta">
-                    <span>PLAYERS: ${game.players.length}/${game.maxPlayers}: 
-                      <span class="players-list">${game.players.map(player => player.username)}</span>
-                    </span>
+                    <span class="players-count">PLAYERS: ${game.players.length}/${game.maxPlayers}</span>
                     <span class="game-status ${game.status === 'in_progress' ? 'in-progress' : 'waiting'}">${game.status.toUpperCase()}</span>
                 </div>
+                <div class="players-list">
+                    ${game.players.map(p => `<span class="player-name">${p.username}</span>`).join(', ')}
+                </div>
             </div>
-            <button
-                class="join-game-btn"
-                data-game-id="${game.id}"
-                ${game.status !== 'waiting' || game.players.length >= game.maxPlayers ? 'hidden' : ''}>
-                Join
-            </button>
-            <button
-                class="enter-game-btn"
-                data-game-id="${game.id}"
-                ${game.status !== 'in_game' ? 'hidden' : ''}>
-                Join
-            </button>
+            ${game.isJoined ? `
+                <button class="leave-game-btn" data-game-id="${game.id}">LEAVE GAME</button>
+            ` : `
+                <button
+                    class="join-game-btn"
+                    data-game-id="${game.id}"
+                    ${game.status !== 'waiting' || game.players.length >= game.maxPlayers ? 'disabled' : ''}>
+                    JOIN
+                </button>
+            `}
         </div>
     `).join('');
 
+    // Add event listeners
     container.querySelectorAll('.join-game-btn').forEach(btn => {
         btn.addEventListener('click', () => {
-            const gameId = btn.dataset.gameId;
-            joinGame(parseInt(gameId), container, router);
+            const gameId = parseInt(btn.dataset.gameId);
+            joinGame(gameId, container, router);
+        });
+    });
+
+    container.querySelectorAll('.leave-game-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const gameId = parseInt(btn.dataset.gameId);
+            leaveGame(gameId, container, router);
         });
     });
 }
 
 async function createGame(container, router) {
-    const errorDiv = showError(container, '');
+    showError(container, '');
 
     try {
-        const data = await api.createGame();
-        await joinGame(data.gameId, container, router);
+        await api.createGame();
+        // Don't navigate - stay in lobby
+        // WebSocket will update the game list automatically
     } catch (error) {
         console.error('Failed to create game:', error);
         showError(container, error.message || 'Failed to create game');
@@ -163,15 +171,27 @@ async function createGame(container, router) {
 }
 
 async function joinGame(gameId, container, router) {
-    const errorDiv = showError(container, '');
+    showError(container, '');
 
     try {
         await api.joinGame(gameId);
-        cleanup();
-        router.navigate('/game', { gameId });
+        // Don't navigate - stay in lobby
+        // WebSocket will update the game list automatically
     } catch (error) {
         console.error('Failed to join game:', error);
         showError(container, error.message || 'Failed to join game');
+    }
+}
+
+async function leaveGame(gameId, container, router) {
+    showError(container, '');
+
+    try {
+        await api.leaveGame(gameId);
+        // WebSocket will update the game list automatically
+    } catch (error) {
+        console.error('Failed to leave game:', error);
+        showError(container, error.message || 'Failed to leave game');
     }
 }
 
