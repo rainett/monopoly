@@ -70,14 +70,10 @@ func (h *Handlers) getUserOrError(w http.ResponseWriter, userID int64) (*store.U
 	return user, true
 }
 
-// broadcastLobbyUpdate fetches current games and broadcasts to all lobby clients
+// broadcastLobbyUpdate sends personalized full state updates to all lobby clients
+// This is kept for backward compatibility but should be avoided in favor of specific events
 func (h *Handlers) broadcastLobbyUpdate() {
-	games, err := h.lobby.ListGames(0) // 0 = no specific user context for broadcast
-	if err != nil {
-		log.Printf("Failed to list games for broadcast: %v", err)
-		return
-	}
-	h.lobbyManager.BroadcastUpdate(games)
+	h.lobbyManager.BroadcastUpdate()
 }
 
 // Register Auth handlers
@@ -205,8 +201,8 @@ func (h *Handlers) CreateGame(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Broadcast lobby update to all connected clients
-	go h.broadcastLobbyUpdate()
+	// Broadcast game_created event to all connected clients
+	go h.lobbyManager.BroadcastGameCreated(game.ID)
 
 	writeJSON(w, http.StatusCreated, game)
 }
@@ -237,8 +233,29 @@ func (h *Handlers) JoinGame(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Broadcast lobby update to all connected clients
-	go h.broadcastLobbyUpdate()
+	// Broadcast player_joined event to all connected clients
+	go h.lobbyManager.BroadcastPlayerJoined(gameID, userID, user.Username)
+
+	// Check if game should start (when game is full)
+	event, err := h.engine.StartGameIfFull(gameID)
+	if err != nil {
+		log.Printf("Error starting game: %v", err)
+	} else if event != nil {
+		// Game started! Broadcast to game room and lobby
+		log.Printf("Game %d started (full)", gameID)
+
+		// Broadcast to game room (if anyone connected)
+		gameRoom := h.wsManager.GetRoom(gameID)
+		if gameRoom != nil {
+			go gameRoom.Broadcast(ws.OutgoingMessage{
+				Type:    event.Type,
+				Payload: event.Payload,
+			})
+		}
+
+		// Broadcast status change to lobby
+		go h.lobbyManager.BroadcastGameStatusChange(gameID, "in_progress")
+	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"message": "Joined game successfully",
@@ -266,8 +283,24 @@ func (h *Handlers) LeaveGame(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Broadcast lobby update to all connected clients
-	go h.broadcastLobbyUpdate()
+	// Broadcast player_left event to all connected clients
+	go h.lobbyManager.BroadcastPlayerLeft(gameID, userID)
+
+	// Check if game still exists (it gets deleted if empty)
+	games, err := h.lobby.ListGames(0)
+	if err == nil {
+		gameExists := false
+		for _, g := range games {
+			if g.ID == gameID {
+				gameExists = true
+				break
+			}
+		}
+		// If game doesn't exist anymore, broadcast game_deleted
+		if !gameExists {
+			go h.lobbyManager.BroadcastGameDeleted(gameID)
+		}
+	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"message": "Left game successfully",

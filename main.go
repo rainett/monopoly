@@ -41,8 +41,8 @@ func main() {
 	authService := auth.NewService(authStore, sessionManager)
 	lobby := game.NewLobby(lobbyStore)
 	engine := game.NewEngine(gameStore)
-	wsManager := ws.NewManager(engine)
-	lobbyManager := ws.NewLobbyManager()
+	lobbyManager := ws.NewLobbyManager(lobby)
+	wsManager := ws.NewManager(engine, lobbyManager)
 
 	// Initialize HTTP server
 	server := httpserver.NewServer(authService, authStore, lobby, engine, wsManager, lobbyManager)

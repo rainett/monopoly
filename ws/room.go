@@ -67,3 +67,7 @@ func (r *Room) ClientCount() int {
 	defer r.mu.RUnlock()
 	return len(r.clients)
 }
+
+func (r *Room) IsEmpty() bool {
+	return r.ClientCount() == 0
+}

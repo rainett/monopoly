@@ -13,3 +13,25 @@
     <h2>Available Games</h2>
     <div id="gamesList"></div>
 </div>
+
+<!-- Create Game Modal -->
+<div id="createGameModal" class="modal-overlay" style="display: none;">
+    <div class="modal-content">
+        <h2>Create New Game</h2>
+        <form id="createGameForm">
+            <div class="form-group">
+                <label for="maxPlayers">Maximum Players:</label>
+                <div class="player-selector">
+                    <button type="button" id="decreasePlayersBtn" class="player-btn">-</button>
+                    <input type="number" id="maxPlayers" name="maxPlayers" min="2" max="8" value="4" readonly>
+                    <button type="button" id="increasePlayersBtn" class="player-btn">+</button>
+                </div>
+                <div class="hint">Select between 2 and 8 players</div>
+            </div>
+            <div class="modal-actions">
+                <button type="submit" class="primary-btn">Create</button>
+                <button type="button" id="cancelCreateBtn" class="secondary-btn">Cancel</button>
+            </div>
+        </form>
+    </div>
+</div>

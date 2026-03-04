@@ -45,3 +45,7 @@ type TurnChangedPayload struct {
 	PreviousPlayerID int64 `json:"previousPlayerId"`
 	CurrentPlayerID  int64 `json:"currentPlayerId"`
 }
+
+type GameFinishedPayload struct {
+	Players []*Player `json:"players"`
+}

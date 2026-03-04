@@ -71,3 +71,7 @@ func (l *Lobby) LeaveGame(gameID, userID int64) error {
 func (l *Lobby) GetUserCurrentGame(userID int64) (*store.LobbyGameDTO, error) {
 	return l.store.GetUserCurrentGame(userID)
 }
+
+func (l *Lobby) GetGameWithPlayers(gameID, userID int64) (*store.LobbyGameDTO, error) {
+	return l.store.GetGameWithPlayers(gameID, userID)
+}

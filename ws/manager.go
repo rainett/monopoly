@@ -18,15 +18,17 @@ const (
 )
 
 type Manager struct {
-	rooms  map[int64]*Room
-	engine *game.Engine
-	mu     sync.RWMutex
+	rooms        map[int64]*Room
+	engine       *game.Engine
+	lobbyManager *LobbyManager
+	mu           sync.RWMutex
 }
 
-func NewManager(engine *game.Engine) *Manager {
+func NewManager(engine *game.Engine, lobbyManager *LobbyManager) *Manager {
 	return &Manager{
-		rooms:  make(map[int64]*Room),
-		engine: engine,
+		rooms:        make(map[int64]*Room),
+		engine:       engine,
+		lobbyManager: lobbyManager,
 	}
 }
 
@@ -60,6 +62,7 @@ func (m *Manager) readPump(client *Client, room *Room) {
 	defer func() {
 		room.RemoveClient(client)
 		client.conn.Close()
+		m.cleanupRoomIfNeeded(room.gameID)
 	}()
 
 	client.conn.SetReadDeadline(time.Now().Add(pongWait))
@@ -125,32 +128,41 @@ func (m *Manager) writePump(client *Client) {
 	}
 }
 
+func (m *Manager) cleanupRoomIfNeeded(gameID int64) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	room, exists := m.rooms[gameID]
+	if !exists {
+		return
+	}
+
+	// Only cleanup if room is empty
+	if !room.IsEmpty() {
+		return
+	}
+
+	// Check if game is finished
+	state, err := m.engine.GetGameState(gameID)
+	if err != nil || state == nil {
+		// If we can't get game state, clean up anyway (game might be deleted)
+		delete(m.rooms, gameID)
+		log.Printf("Cleaned up room for game %d (game not found)", gameID)
+		return
+	}
+
+	// Only cleanup finished games
+	if state.Status == "finished" {
+		delete(m.rooms, gameID)
+		log.Printf("Cleaned up empty room for finished game %d", gameID)
+	}
+}
+
 func (m *Manager) handleMessage(client *Client, room *Room, msg *IncomingMessage) {
 	var event *game.Event
 	var err error
 
 	switch msg.Type {
-	case "ready":
-		isReady := true
-		if readyPayload, ok := msg.Payload["isReady"]; ok {
-			if readyBool, ok := readyPayload.(bool); ok {
-				isReady = readyBool
-			} else {
-				log.Printf("Invalid isReady payload type: %T", readyPayload)
-				errorMsg := OutgoingMessage{
-					Type:    "error",
-					Payload: map[string]string{"message": "Invalid isReady value"},
-				}
-				data, _ := json.Marshal(errorMsg)
-				select {
-				case client.send <- data:
-				default:
-				}
-				return
-			}
-		}
-		event, err = m.engine.SetReady(room.gameID, client.userID, isReady)
-
 	case "end_turn":
 		event, err = m.engine.EndTurn(room.gameID, client.userID)
 
@@ -179,5 +191,12 @@ func (m *Manager) handleMessage(client *Client, room *Room, msg *IncomingMessage
 			Type:    event.Type,
 			Payload: event.Payload,
 		})
+
+		// Notify lobby of important game status changes
+		if event.Type == "game_started" {
+			go m.lobbyManager.BroadcastGameStatusChange(room.gameID, "in_progress")
+		} else if event.Type == "game_finished" {
+			go m.lobbyManager.BroadcastGameStatusChange(room.gameID, "finished")
+		}
 	}
 }

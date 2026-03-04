@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS game_players (
     player_order INTEGER NOT NULL,
     is_ready INTEGER DEFAULT 0,
     is_current_turn INTEGER DEFAULT 0,
+    has_played_turn INTEGER DEFAULT 0,
     PRIMARY KEY (game_id, user_id),
     FOREIGN KEY (game_id) REFERENCES games(id),
     FOREIGN KEY (user_id) REFERENCES users(id)

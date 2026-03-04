@@ -13,6 +13,7 @@ type LobbyStore interface {
 	LeaveGame(gameID, userID int64) error
 	GetUserCurrentGame(userID int64) (*LobbyGameDTO, error)
 	IsUserInGame(userID int64) (bool, int64, error)
+	GetGameWithPlayers(gameID, userID int64) (*LobbyGameDTO, error)
 }
 
 // LobbyGameDTO is the simplified DTO for lobby game list
@@ -285,4 +286,51 @@ func (s *SQLiteLobbyStore) IsUserInGame(userID int64) (bool, int64, error) {
 		return false, 0, fmt.Errorf("failed to check user game: %w", err)
 	}
 	return true, gameID, nil
+}
+
+func (s *SQLiteLobbyStore) GetGameWithPlayers(gameID, userID int64) (*LobbyGameDTO, error) {
+	// Get game details
+	var game LobbyGameDTO
+	err := s.db.QueryRow(`
+		SELECT id, status, max_players
+		FROM games
+		WHERE id = ?
+	`, gameID).Scan(&game.ID, &game.Status, &game.MaxPlayers)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, wrapDBError("get game", err)
+	}
+
+	// Get players for this game
+	rows, err := s.db.Query(`
+		SELECT gp.user_id, u.username
+		FROM game_players gp
+		JOIN users u ON gp.user_id = u.id
+		WHERE gp.game_id = ?
+		ORDER BY gp.player_order
+	`, gameID)
+	if err != nil {
+		return nil, wrapDBError("get game players", err)
+	}
+	defer rows.Close()
+
+	game.Players = []LobbyPlayerDTO{}
+	for rows.Next() {
+		var player LobbyPlayerDTO
+		if err := rows.Scan(&player.UserID, &player.Username); err != nil {
+			return nil, wrapDBError("scan player", err)
+		}
+		if player.UserID == userID {
+			game.IsJoined = true
+		}
+		game.Players = append(game.Players, player)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to iterate players: %w", err)
+	}
+
+	return &game, nil
 }

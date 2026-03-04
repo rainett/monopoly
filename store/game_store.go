@@ -14,6 +14,8 @@ type GameStore interface {
 	UpdateGameStatus(gameID int64, status string) error
 	UpdateCurrentTurn(gameID, userID int64) error
 	GetCurrentTurnPlayer(gameID int64) (*GamePlayer, error)
+	MarkPlayerTurnComplete(gameID, userID int64) error
+	AllPlayersCompletedTurn(gameID int64) (bool, error)
 }
 
 // Game represents a game entity
@@ -32,6 +34,7 @@ type GamePlayer struct {
 	PlayerOrder   int
 	IsReady       bool
 	IsCurrentTurn bool
+	HasPlayedTurn bool
 }
 
 // SQLiteGameStore implements GameStore for SQLite
@@ -62,7 +65,7 @@ func (s *SQLiteGameStore) GetGame(gameID int64) (*Game, error) {
 
 func (s *SQLiteGameStore) GetGamePlayers(gameID int64) ([]*GamePlayer, error) {
 	rows, err := s.db.Query(`
-		SELECT gp.game_id, gp.user_id, u.username, gp.player_order, gp.is_ready, gp.is_current_turn
+		SELECT gp.game_id, gp.user_id, u.username, gp.player_order, gp.is_ready, gp.is_current_turn, gp.has_played_turn
 		FROM game_players gp
 		JOIN users u ON gp.user_id = u.id
 		WHERE gp.game_id = ?
@@ -76,12 +79,13 @@ func (s *SQLiteGameStore) GetGamePlayers(gameID int64) ([]*GamePlayer, error) {
 	var players []*GamePlayer
 	for rows.Next() {
 		player := &GamePlayer{}
-		var isReady, isCurrentTurn int
-		if err := rows.Scan(&player.GameID, &player.UserID, &player.Username, &player.PlayerOrder, &isReady, &isCurrentTurn); err != nil {
+		var isReady, isCurrentTurn, hasPlayedTurn int
+		if err := rows.Scan(&player.GameID, &player.UserID, &player.Username, &player.PlayerOrder, &isReady, &isCurrentTurn, &hasPlayedTurn); err != nil {
 			return nil, fmt.Errorf("failed to scan player: %w", err)
 		}
-		player.IsReady = isReady == 1
-		player.IsCurrentTurn = isCurrentTurn == 1
+		player.IsReady = intToBool(isReady)
+		player.IsCurrentTurn = intToBool(isCurrentTurn)
+		player.HasPlayedTurn = intToBool(hasPlayedTurn)
 		players = append(players, player)
 	}
 	if err := rows.Err(); err != nil {
@@ -104,13 +108,9 @@ func (s *SQLiteGameStore) JoinGame(gameID, userID int64, playerOrder int) error 
 }
 
 func (s *SQLiteGameStore) UpdatePlayerReady(gameID, userID int64, isReady bool) error {
-	readyVal := 0
-	if isReady {
-		readyVal = 1
-	}
 	_, err := s.db.Exec(
 		"UPDATE game_players SET is_ready = ? WHERE game_id = ? AND user_id = ?",
-		readyVal, gameID, userID,
+		boolToInt(isReady), gameID, userID,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to update player ready: %w", err)
@@ -171,7 +171,35 @@ func (s *SQLiteGameStore) GetCurrentTurnPlayer(gameID int64) (*GamePlayer, error
 	if err != nil {
 		return nil, fmt.Errorf("failed to get current turn player: %w", err)
 	}
-	player.IsReady = isReady == 1
-	player.IsCurrentTurn = isCurrentTurn == 1
+	player.IsReady = intToBool(isReady)
+	player.IsCurrentTurn = intToBool(isCurrentTurn)
 	return player, nil
+}
+
+func (s *SQLiteGameStore) MarkPlayerTurnComplete(gameID, userID int64) error {
+	_, err := s.db.Exec(
+		"UPDATE game_players SET has_played_turn = 1 WHERE game_id = ? AND user_id = ?",
+		gameID, userID,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to mark player turn complete: %w", err)
+	}
+	return nil
+}
+
+func (s *SQLiteGameStore) AllPlayersCompletedTurn(gameID int64) (bool, error) {
+	var totalPlayers, playersCompleted int
+	err := s.db.QueryRow(`
+		SELECT
+			COUNT(*) as total,
+			SUM(has_played_turn) as completed
+		FROM game_players
+		WHERE game_id = ?
+	`, gameID).Scan(&totalPlayers, &playersCompleted)
+
+	if err != nil {
+		return false, fmt.Errorf("failed to check if all players completed turn: %w", err)
+	}
+
+	return totalPlayers > 0 && totalPlayers == playersCompleted, nil
 }

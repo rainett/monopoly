@@ -15,8 +15,20 @@ func wrapDBError(action string, err error) error {
 	return fmt.Errorf("failed to %s: %w", action, err)
 }
 
+// boolToInt converts a boolean to SQLite integer (0 or 1)
+func boolToInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
+// intToBool converts SQLite integer (0 or 1) to boolean
+func intToBool(i int) bool {
+	return i == 1
+}
+
 // InitDB initializes the database connection with proper configuration
-// This is the only infrastructure function kept in the main store package
 func InitDB(dbPath string, maxOpenConnections, maxIdleConnections int) (*sql.DB, error) {
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
@@ -38,12 +50,4 @@ func InitDB(dbPath string, maxOpenConnections, maxIdleConnections int) (*sql.DB,
 	}
 
 	return db, nil
-}
-
-// Close closes the database connection
-func Close(db *sql.DB) error {
-	if db != nil {
-		return db.Close()
-	}
-	return nil
 }

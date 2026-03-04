@@ -181,6 +181,37 @@ func (e *Engine) SetReady(gameID, userID int64, isReady bool) (*Event, error) {
 	}, nil
 }
 
+func (e *Engine) StartGameIfFull(gameID int64) (*Event, error) {
+	state, err := e.GetGameState(gameID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Only start if game is waiting and is full (current players == max players)
+	if state.Status != StatusWaiting || len(state.Players) < state.MaxPlayers {
+		return nil, nil
+	}
+
+	// Start the game
+	if err := e.store.UpdateGameStatus(gameID, StatusInProgress); err != nil {
+		return nil, err
+	}
+
+	// Set first player's turn
+	firstPlayer := state.Players[0]
+	if err := e.store.UpdateCurrentTurn(gameID, firstPlayer.UserID); err != nil {
+		return nil, err
+	}
+
+	return &Event{
+		Type:   "game_started",
+		GameID: gameID,
+		Payload: GameStartedPayload{
+			CurrentPlayerID: firstPlayer.UserID,
+		},
+	}, nil
+}
+
 func (e *Engine) EndTurn(gameID, userID int64) (*Event, error) {
 	state, err := e.GetGameState(gameID)
 	if err != nil {
@@ -193,6 +224,38 @@ func (e *Engine) EndTurn(gameID, userID int64) (*Event, error) {
 
 	if state.CurrentPlayerID != userID {
 		return nil, ErrNotYourTurn
+	}
+
+	// Mark current player's turn as complete
+	if err := e.store.MarkPlayerTurnComplete(gameID, userID); err != nil {
+		return nil, err
+	}
+
+	// Check if all players have completed their turn
+	allCompleted, err := e.store.AllPlayersCompletedTurn(gameID)
+	if err != nil {
+		return nil, err
+	}
+
+	if allCompleted {
+		// Game is finished
+		if err := e.store.UpdateGameStatus(gameID, StatusFinished); err != nil {
+			return nil, err
+		}
+
+		// Get final state with all players
+		finalState, err := e.GetGameState(gameID)
+		if err != nil {
+			return nil, err
+		}
+
+		return &Event{
+			Type:   "game_finished",
+			GameID: gameID,
+			Payload: GameFinishedPayload{
+				Players: finalState.Players,
+			},
+		}, nil
 	}
 
 	// Find next player

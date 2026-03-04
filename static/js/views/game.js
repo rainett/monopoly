@@ -2,7 +2,6 @@ import { api } from '../api.js';
 import { templateLoader } from '../template.js';
 
 let ws = null;
-let isReady = false;
 let gameState = null;
 let reconnectTimeout = null;
 
@@ -27,7 +26,6 @@ export async function render(container, router) {
         router.navigate('/lobby');
     });
 
-    container.querySelector('#readyBtn').addEventListener('click', toggleReady);
     container.querySelector('#endTurnBtn').addEventListener('click', endTurn);
 
     connectWebSocket(gameId, user.userId, container);
@@ -45,7 +43,6 @@ export function cleanup() {
         ws = null;
     }
 
-    isReady = false;
     gameState = null;
 }
 
@@ -96,28 +93,44 @@ function handleWebSocketMessage(message, gameId, userId, container) {
     switch (message.type) {
         case 'player_joined':
             addLog(`${message.payload.player.username} joined the game`, 'event', container);
-            loadGameState(gameId, userId, container);
-            break;
-
-        case 'player_ready':
-            addLog('Player ready status updated', 'event', container);
+            // TODO: Update UI directly from payload instead of refetching
             loadGameState(gameId, userId, container);
             break;
 
         case 'game_started':
             addLog('Game started!', 'event', container);
+            // Game started - need full state to show current turn
             loadGameState(gameId, userId, container);
             break;
 
         case 'turn_changed':
+            // Update UI directly from payload without refetching
+            updateTurnFromPayload(message.payload, userId, container);
             addLog('Turn changed', 'event', container);
-            loadGameState(gameId, userId, container);
+            break;
+
+        case 'game_finished':
+            addLog('Game Over!', 'event', container);
+            showGameOver(message.payload, container);
             break;
 
         case 'error':
             addLog(`Error: ${message.payload.message}`, 'system', container);
             break;
     }
+}
+
+function updateTurnFromPayload(payload, userId, container) {
+    // Update turn display without full API call
+    if (!gameState) return;
+
+    // Update which player has current turn
+    gameState.players.forEach(player => {
+        player.isCurrentTurn = player.userId === payload.currentPlayerId;
+    });
+
+    // Update UI
+    updateUI(gameState, userId, container);
 }
 
 function updateUI(state, userId, container) {
@@ -132,21 +145,8 @@ function updateUI(state, userId, container) {
                 <strong>${player.username}</strong>
                 ${player.userId === userId ? ' (You)' : ''}
             </div>
-            ${player.isReady ? '<span class="ready-badge">Ready</span>' : '<span class="not-ready">Not Ready</span>'}
         </div>
     `).join('');
-
-    const myPlayer = state.players.find(p => p.userId === userId);
-    if (myPlayer) {
-        isReady = myPlayer.isReady;
-        const readyBtn = container.querySelector('#readyBtn');
-        if (state.status === 'waiting') {
-            readyBtn.textContent = isReady ? 'Not Ready' : 'Ready';
-            readyBtn.disabled = false;
-        } else {
-            readyBtn.disabled = true;
-        }
-    }
 
     const currentTurnDiv = container.querySelector('#currentTurn');
     if (state.status === 'in_progress') {
@@ -161,15 +161,6 @@ function updateUI(state, userId, container) {
         currentTurnDiv.textContent = '';
         container.querySelector('#endTurnBtn').disabled = true;
     }
-}
-
-function toggleReady() {
-    if (!ws || ws.readyState !== WebSocket.OPEN) return;
-
-    ws.send(JSON.stringify({
-        type: 'ready',
-        payload: { isReady: !isReady }
-    }));
 }
 
 function endTurn() {
@@ -190,5 +181,47 @@ function addLog(message, type = 'event', container) {
     const timestamp = new Date().toLocaleTimeString();
     entry.textContent = `[${timestamp}] ${message}`;
     logDiv.appendChild(entry);
+
+    // Keep only last 100 entries to prevent unbounded growth
+    const maxEntries = 100;
+    while (logDiv.children.length > maxEntries) {
+        logDiv.removeChild(logDiv.firstChild);
+    }
+
     logDiv.scrollTop = logDiv.scrollHeight;
+}
+
+function showGameOver(payload, container) {
+    // Hide game controls
+    const endTurnBtn = container.querySelector('#endTurnBtn');
+    if (endTurnBtn) endTurnBtn.style.display = 'none';
+
+    // Create game over overlay
+    const overlay = document.createElement('div');
+    overlay.className = 'game-over-overlay';
+    overlay.innerHTML = `
+        <div class="game-over-modal">
+            <h2>Game Over!</h2>
+            <h3>Final Results</h3>
+            <div class="results-list">
+                ${payload.players.map((player, index) => `
+                    <div class="result-item">
+                        <span class="result-rank">#${index + 1}</span>
+                        <span class="result-name">${player.username}</span>
+                    </div>
+                `).join('')}
+            </div>
+            <button id="returnToLobbyBtn" class="primary-btn">Return to Lobby</button>
+        </div>
+    `;
+
+    container.appendChild(overlay);
+
+    // Add event listener to return button
+    const returnBtn = overlay.querySelector('#returnToLobbyBtn');
+    returnBtn.addEventListener('click', () => {
+        cleanup();
+        // Get router from app - need to navigate back
+        window.location.hash = '#/lobby';
+    });
 }
