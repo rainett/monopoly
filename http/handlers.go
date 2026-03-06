@@ -429,3 +429,166 @@ func (h *Handlers) HandleLobbyWebSocket(w http.ResponseWriter, r *http.Request) 
 
 	h.lobbyManager.HandleConnection(conn, userID)
 }
+
+// Friends handlers
+
+func (h *Handlers) SearchUsers(w http.ResponseWriter, r *http.Request) {
+	userID, ok := GetUserIDFromContext(r.Context())
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	query := r.URL.Query().Get("q")
+	if len(query) < 2 {
+		writeJSON(w, http.StatusOK, []interface{}{})
+		return
+	}
+
+	users, err := h.authStore.SearchUsers(query, userID, 10)
+	if err != nil {
+		log.Printf("SearchUsers error: %v", err)
+		http.Error(w, "Failed to search users", http.StatusInternalServerError)
+		return
+	}
+
+	// Convert to safe response format
+	result := make([]map[string]interface{}, 0, len(users))
+	for _, u := range users {
+		result = append(result, map[string]interface{}{
+			"userId":   u.ID,
+			"username": u.Username,
+		})
+	}
+
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (h *Handlers) SendFriendRequest(w http.ResponseWriter, r *http.Request) {
+	userID, ok := GetUserIDFromContext(r.Context())
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	var req struct {
+		UserID int64 `json:"userId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+
+	if req.UserID == userID {
+		http.Error(w, "Cannot send friend request to yourself", http.StatusBadRequest)
+		return
+	}
+
+	err := h.authStore.SendFriendRequest(userID, req.UserID)
+	if err != nil {
+		log.Printf("SendFriendRequest error: %v", err)
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"message": "Friend request sent"})
+}
+
+func (h *Handlers) AcceptFriendRequest(w http.ResponseWriter, r *http.Request) {
+	userID, ok := GetUserIDFromContext(r.Context())
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	vars := mux.Vars(r)
+	friendID, err := strconv.ParseInt(vars["friendId"], 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid friend ID", http.StatusBadRequest)
+		return
+	}
+
+	err = h.authStore.AcceptFriendRequest(userID, friendID)
+	if err != nil {
+		log.Printf("AcceptFriendRequest error: %v", err)
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"message": "Friend request accepted"})
+}
+
+func (h *Handlers) DeclineFriendRequest(w http.ResponseWriter, r *http.Request) {
+	userID, ok := GetUserIDFromContext(r.Context())
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	vars := mux.Vars(r)
+	friendID, err := strconv.ParseInt(vars["friendId"], 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid friend ID", http.StatusBadRequest)
+		return
+	}
+
+	err = h.authStore.DeclineFriendRequest(userID, friendID)
+	if err != nil {
+		log.Printf("DeclineFriendRequest error: %v", err)
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"message": "Friend request declined"})
+}
+
+func (h *Handlers) GetFriends(w http.ResponseWriter, r *http.Request) {
+	userID, ok := GetUserIDFromContext(r.Context())
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	friends, err := h.authStore.GetFriends(userID)
+	if err != nil {
+		log.Printf("GetFriends error: %v", err)
+		http.Error(w, "Failed to get friends", http.StatusInternalServerError)
+		return
+	}
+
+	result := make([]map[string]interface{}, 0, len(friends))
+	for _, f := range friends {
+		result = append(result, map[string]interface{}{
+			"userId":   f.ID,
+			"username": f.Username,
+		})
+	}
+
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (h *Handlers) GetPendingRequests(w http.ResponseWriter, r *http.Request) {
+	userID, ok := GetUserIDFromContext(r.Context())
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	requests, err := h.authStore.GetPendingRequests(userID)
+	if err != nil {
+		log.Printf("GetPendingRequests error: %v", err)
+		http.Error(w, "Failed to get requests", http.StatusInternalServerError)
+		return
+	}
+
+	result := make([]map[string]interface{}, 0, len(requests))
+	for _, req := range requests {
+		result = append(result, map[string]interface{}{
+			"fromUserId":   req.FromUserID,
+			"fromUsername": req.FromUsername,
+			"createdAt":    req.CreatedAt,
+		})
+	}
+
+	writeJSON(w, http.StatusOK, result)
+}

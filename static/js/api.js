@@ -181,6 +181,38 @@ class ApiClient {
             return { userId: null, username: null };
         }
     }
+
+    // Friends API
+    async searchUsers(query) {
+        return this.request(`/api/users/search?q=${encodeURIComponent(query)}`);
+    }
+
+    async getFriends() {
+        return this.request('/api/friends');
+    }
+
+    async getPendingRequests() {
+        return this.request('/api/friends/requests');
+    }
+
+    async sendFriendRequest(userId) {
+        return this.request('/api/friends/request', {
+            method: 'POST',
+            body: JSON.stringify({ userId }),
+        });
+    }
+
+    async acceptFriendRequest(friendId) {
+        return this.request(`/api/friends/accept/${friendId}`, {
+            method: 'POST',
+        });
+    }
+
+    async declineFriendRequest(friendId) {
+        return this.request(`/api/friends/decline/${friendId}`, {
+            method: 'POST',
+        });
+    }
 }
 
 export const api = new ApiClient();

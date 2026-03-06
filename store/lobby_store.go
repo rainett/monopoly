@@ -14,6 +14,21 @@ type LobbyStore interface {
 	GetUserCurrentGame(userID int64) (*LobbyGameDTO, error)
 	IsUserInGame(userID int64) (bool, int64, error)
 	GetGameWithPlayers(gameID, userID int64) (*LobbyGameDTO, error)
+	// Game invites
+	InviteToGame(gameID, fromUserID, toUserID int64) error
+	GetGameInvites(userID int64) ([]*GameInvite, error)
+	AcceptGameInvite(inviteID, userID int64) error
+	DeclineGameInvite(inviteID, userID int64) error
+}
+
+type GameInvite struct {
+	ID           int64
+	GameID       int64
+	FromUserID   int64
+	FromUsername string
+	ToUserID     int64
+	Status       string
+	CreatedAt    string
 }
 
 // LobbyGameDTO is the simplified DTO for lobby game list
@@ -334,4 +349,80 @@ func (s *SQLiteLobbyStore) GetGameWithPlayers(gameID, userID int64) (*LobbyGameD
 	}
 
 	return &game, nil
+}
+
+// Game invite methods
+
+func (s *SQLiteLobbyStore) InviteToGame(gameID, fromUserID, toUserID int64) error {
+	_, err := s.db.Exec(`
+		INSERT INTO game_invites (game_id, from_user_id, to_user_id, status)
+		VALUES (?, ?, ?, 'pending')
+	`, gameID, fromUserID, toUserID)
+	if err != nil {
+		return fmt.Errorf("failed to create invite: %w", err)
+	}
+	return nil
+}
+
+func (s *SQLiteLobbyStore) GetGameInvites(userID int64) ([]*GameInvite, error) {
+	rows, err := s.db.Query(`
+		SELECT gi.id, gi.game_id, gi.from_user_id, u.username, gi.to_user_id, gi.status, gi.created_at
+		FROM game_invites gi
+		JOIN users u ON gi.from_user_id = u.id
+		JOIN games g ON gi.game_id = g.id
+		WHERE gi.to_user_id = ? AND gi.status = 'pending' AND g.status = 'waiting'
+		ORDER BY gi.created_at DESC
+	`, userID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get invites: %w", err)
+	}
+	defer rows.Close()
+
+	var invites []*GameInvite
+	for rows.Next() {
+		inv := &GameInvite{}
+		if err := rows.Scan(&inv.ID, &inv.GameID, &inv.FromUserID, &inv.FromUsername, &inv.ToUserID, &inv.Status, &inv.CreatedAt); err != nil {
+			return nil, fmt.Errorf("failed to scan invite: %w", err)
+		}
+		invites = append(invites, inv)
+	}
+	return invites, rows.Err()
+}
+
+func (s *SQLiteLobbyStore) AcceptGameInvite(inviteID, userID int64) error {
+	// Get invite details
+	var gameID int64
+	err := s.db.QueryRow(`
+		SELECT game_id FROM game_invites
+		WHERE id = ? AND to_user_id = ? AND status = 'pending'
+	`, inviteID, userID).Scan(&gameID)
+	if err == sql.ErrNoRows {
+		return errors.New("invite not found")
+	}
+	if err != nil {
+		return fmt.Errorf("failed to get invite: %w", err)
+	}
+
+	// Update invite status
+	_, err = s.db.Exec(`UPDATE game_invites SET status = 'accepted' WHERE id = ?`, inviteID)
+	if err != nil {
+		return fmt.Errorf("failed to accept invite: %w", err)
+	}
+
+	return nil
+}
+
+func (s *SQLiteLobbyStore) DeclineGameInvite(inviteID, userID int64) error {
+	result, err := s.db.Exec(`
+		UPDATE game_invites SET status = 'declined'
+		WHERE id = ? AND to_user_id = ? AND status = 'pending'
+	`, inviteID, userID)
+	if err != nil {
+		return fmt.Errorf("failed to decline invite: %w", err)
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return errors.New("invite not found")
+	}
+	return nil
 }

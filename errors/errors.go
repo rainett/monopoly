@@ -22,6 +22,21 @@ const (
 	ErrCodeCannotBuy        ErrorCode = "CANNOT_BUY"
 	ErrCodeInsufficientFunds ErrorCode = "INSUFFICIENT_FUNDS"
 	ErrCodePlayerBankrupt   ErrorCode = "PLAYER_BANKRUPT"
+	ErrCodeNotInJail            ErrorCode = "NOT_IN_JAIL"
+	ErrCodeAlreadyInJail        ErrorCode = "ALREADY_IN_JAIL"
+	ErrCodePropertyNotOwned     ErrorCode = "PROPERTY_NOT_OWNED"
+	ErrCodePropertyAlreadyMortgaged ErrorCode = "PROPERTY_ALREADY_MORTGAGED"
+	ErrCodePropertyNotMortgaged ErrorCode = "PROPERTY_NOT_MORTGAGED"
+	ErrCodeNoMonopoly           ErrorCode = "NO_MONOPOLY"
+	ErrCodeMaxImprovements      ErrorCode = "MAX_IMPROVEMENTS"
+	ErrCodeNoImprovements       ErrorCode = "NO_IMPROVEMENTS"
+	ErrCodeUnevenBuild          ErrorCode = "UNEVEN_BUILD"
+	ErrCodeHouseShortage        ErrorCode = "HOUSE_SHORTAGE"
+	ErrCodeHotelShortage        ErrorCode = "HOTEL_SHORTAGE"
+	ErrCodeAuctionInProgress    ErrorCode = "AUCTION_IN_PROGRESS"
+	ErrCodeNoAuction            ErrorCode = "NO_AUCTION"
+	ErrCodeNotYourBid           ErrorCode = "NOT_YOUR_BID"
+	ErrCodeBidTooLow            ErrorCode = "BID_TOO_LOW"
 
 	// Auth errors
 	ErrCodeUnauthorized      ErrorCode = "UNAUTHORIZED"
@@ -184,4 +199,64 @@ func InsufficientFunds() *AppError {
 
 func PlayerBankrupt() *AppError {
 	return New(ErrCodePlayerBankrupt, "This player is bankrupt")
+}
+
+func NotInJail() *AppError {
+	return New(ErrCodeNotInJail, "You are not in jail")
+}
+
+func AlreadyInJail() *AppError {
+	return New(ErrCodeAlreadyInJail, "You are already in jail")
+}
+
+func PropertyNotOwned() *AppError {
+	return New(ErrCodePropertyNotOwned, "You don't own this property")
+}
+
+func PropertyAlreadyMortgaged() *AppError {
+	return New(ErrCodePropertyAlreadyMortgaged, "This property is already mortgaged")
+}
+
+func PropertyNotMortgaged() *AppError {
+	return New(ErrCodePropertyNotMortgaged, "This property is not mortgaged")
+}
+
+func NoMonopoly() *AppError {
+	return New(ErrCodeNoMonopoly, "You must own all properties in this color group to build")
+}
+
+func MaxImprovements() *AppError {
+	return New(ErrCodeMaxImprovements, "This property already has a hotel")
+}
+
+func NoImprovements() *AppError {
+	return New(ErrCodeNoImprovements, "This property has no houses to sell")
+}
+
+func UnevenBuild() *AppError {
+	return New(ErrCodeUnevenBuild, "You must build evenly across all properties in a color group")
+}
+
+func HouseShortage() *AppError {
+	return New(ErrCodeHouseShortage, "No houses available (max 32 houses in game)")
+}
+
+func HotelShortage() *AppError {
+	return New(ErrCodeHotelShortage, "No hotels available (max 12 hotels in game)")
+}
+
+func AuctionInProgress() *AppError {
+	return New(ErrCodeAuctionInProgress, "An auction is already in progress")
+}
+
+func NoAuction() *AppError {
+	return New(ErrCodeNoAuction, "No auction is in progress")
+}
+
+func NotYourBid() *AppError {
+	return New(ErrCodeNotYourBid, "It's not your turn to bid")
+}
+
+func BidTooLow() *AppError {
+	return New(ErrCodeBidTooLow, "Bid must be higher than current bid")
 }

@@ -58,6 +58,14 @@ func (s *Server) setupRoutes(authService *auth.Service) {
 	protected.HandleFunc("/lobby/leave/{gameId}", s.handlers.LeaveGame).Methods("POST")
 	protected.HandleFunc("/lobby/games/{gameId}", s.handlers.GetGame).Methods("GET")
 
+	// Friends routes
+	protected.HandleFunc("/users/search", s.handlers.SearchUsers).Methods("GET")
+	protected.HandleFunc("/friends", s.handlers.GetFriends).Methods("GET")
+	protected.HandleFunc("/friends/requests", s.handlers.GetPendingRequests).Methods("GET")
+	protected.HandleFunc("/friends/request", s.handlers.SendFriendRequest).Methods("POST")
+	protected.HandleFunc("/friends/accept/{friendId}", s.handlers.AcceptFriendRequest).Methods("POST")
+	protected.HandleFunc("/friends/decline/{friendId}", s.handlers.DeclineFriendRequest).Methods("POST")
+
 	// WebSocket routes (protected)
 	wsRouter := s.router.PathPrefix("/ws").Subrouter()
 	wsRouter.Use(AuthMiddleware(authService))

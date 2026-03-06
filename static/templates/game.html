@@ -78,10 +78,13 @@
                     <div class="status-info">
                         <div>Status: <span id="gameStatus"></span></div>
                         <div id="currentTurn"></div>
+                        <div id="turnTimer" class="turn-timer" style="display:none;"></div>
                         <div id="diceResult" class="dice-result" style="display:none;"></div>
                     </div>
                     <div class="action-buttons">
                         <button id="rollDiceBtn" disabled>Roll Dice</button>
+                        <button id="payBailBtn" class="secondary-btn" style="display:none;">Pay $50 Bail</button>
+                        <button id="useJailCardBtn" class="secondary-btn" style="display:none;">Use Jail Card</button>
                         <div id="buyPrompt" class="buy-prompt" style="display:none;">
                             <div id="buyPromptText"></div>
                             <div class="buy-buttons">
@@ -90,6 +93,7 @@
                             </div>
                         </div>
                         <button id="endTurnBtn" disabled>End Turn</button>
+                        <button id="tradeBtn" class="secondary-btn">Trade</button>
                     </div>
                 </div>
             </div>

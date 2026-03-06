@@ -188,23 +188,221 @@ func (m *Manager) cleanupRoomIfNeeded(gameID int64) {
 func (m *Manager) handleMessage(client *Client, room *Room, msg *IncomingMessage) {
 	switch msg.Type {
 	case "roll_dice":
+		// Player is active, reset their timeout counter
+		m.turnTimer.ResetPlayerTimeouts(room.gameID, client.userID)
 		m.handleRollDice(client, room)
 	case "buy_property":
+		m.turnTimer.ResetPlayerTimeouts(room.gameID, client.userID)
 		m.handleSingleEvent(client, room, func() (*game.Event, error) {
 			return m.engine.BuyProperty(room.gameID, client.userID)
 		})
 	case "pass_property":
-		m.handleSingleEvent(client, room, func() (*game.Event, error) {
+		m.turnTimer.ResetPlayerTimeouts(room.gameID, client.userID)
+		m.handleMultiEvent(client, room, func() ([]*game.Event, error) {
 			return m.engine.PassProperty(room.gameID, client.userID)
 		})
+	case "place_bid":
+		m.handlePlaceBid(client, room, msg)
+	case "pass_auction":
+		m.handlePassAuction(client, room)
 	case "end_turn":
+		m.turnTimer.ResetPlayerTimeouts(room.gameID, client.userID)
 		m.turnTimer.CancelTurn(room.gameID)
 		m.handleSingleEvent(client, room, func() (*game.Event, error) {
 			return m.engine.EndTurn(room.gameID, client.userID)
 		})
+	case "chat":
+		m.handleChat(client, room, msg)
+	case "pay_jail_bail":
+		m.turnTimer.ResetPlayerTimeouts(room.gameID, client.userID)
+		m.handleMultiEvent(client, room, func() ([]*game.Event, error) {
+			return m.engine.PayJailBail(room.gameID, client.userID)
+		})
+	case "use_jail_card":
+		m.turnTimer.ResetPlayerTimeouts(room.gameID, client.userID)
+		m.handleMultiEvent(client, room, func() ([]*game.Event, error) {
+			return m.engine.UseJailFreeCard(room.gameID, client.userID)
+		})
+	case "mortgage_property":
+		m.handleMortgage(client, room, msg)
+	case "unmortgage_property":
+		m.handleUnmortgage(client, room, msg)
+	case "buy_house":
+		m.handleBuyHouse(client, room, msg)
+	case "sell_house":
+		m.handleSellHouse(client, room, msg)
+	case "propose_trade":
+		m.handleProposeTrade(client, room, msg)
+	case "accept_trade":
+		m.handleAcceptTrade(client, room, msg)
+	case "decline_trade":
+		m.handleDeclineTrade(client, room, msg)
+	case "cancel_trade":
+		m.handleCancelTrade(client, room, msg)
 	default:
 		log.Printf("Unknown message type: %s", msg.Type)
 	}
+}
+
+func (m *Manager) handleMortgage(client *Client, room *Room, msg *IncomingMessage) {
+	posFloat, ok := msg.Payload["position"].(float64)
+	if !ok {
+		return
+	}
+	position := int(posFloat)
+
+	m.handleSingleEvent(client, room, func() (*game.Event, error) {
+		return m.engine.MortgageProperty(room.gameID, client.userID, position)
+	})
+}
+
+func (m *Manager) handleUnmortgage(client *Client, room *Room, msg *IncomingMessage) {
+	posFloat, ok := msg.Payload["position"].(float64)
+	if !ok {
+		return
+	}
+	position := int(posFloat)
+
+	m.handleSingleEvent(client, room, func() (*game.Event, error) {
+		return m.engine.UnmortgageProperty(room.gameID, client.userID, position)
+	})
+}
+
+func (m *Manager) handleBuyHouse(client *Client, room *Room, msg *IncomingMessage) {
+	posFloat, ok := msg.Payload["position"].(float64)
+	if !ok {
+		return
+	}
+	position := int(posFloat)
+
+	m.handleSingleEvent(client, room, func() (*game.Event, error) {
+		return m.engine.BuyHouse(room.gameID, client.userID, position)
+	})
+}
+
+func (m *Manager) handleSellHouse(client *Client, room *Room, msg *IncomingMessage) {
+	posFloat, ok := msg.Payload["position"].(float64)
+	if !ok {
+		return
+	}
+	position := int(posFloat)
+
+	m.handleSingleEvent(client, room, func() (*game.Event, error) {
+		return m.engine.SellHouse(room.gameID, client.userID, position)
+	})
+}
+
+func (m *Manager) handleProposeTrade(client *Client, room *Room, msg *IncomingMessage) {
+	toUserIDFloat, ok := msg.Payload["toUserId"].(float64)
+	if !ok {
+		return
+	}
+	toUserID := int64(toUserIDFloat)
+
+	offer := game.TradeOffer{}
+
+	if offerMap, ok := msg.Payload["offer"].(map[string]interface{}); ok {
+		if v, ok := offerMap["offeredMoney"].(float64); ok {
+			offer.OfferedMoney = int(v)
+		}
+		if v, ok := offerMap["requestedMoney"].(float64); ok {
+			offer.RequestedMoney = int(v)
+		}
+		if arr, ok := offerMap["offeredProperties"].([]interface{}); ok {
+			for _, v := range arr {
+				if f, ok := v.(float64); ok {
+					offer.OfferedProperties = append(offer.OfferedProperties, int(f))
+				}
+			}
+		}
+		if arr, ok := offerMap["requestedProperties"].([]interface{}); ok {
+			for _, v := range arr {
+				if f, ok := v.(float64); ok {
+					offer.RequestedProperties = append(offer.RequestedProperties, int(f))
+				}
+			}
+		}
+	}
+
+	m.handleSingleEvent(client, room, func() (*game.Event, error) {
+		return m.engine.ProposeTrade(room.gameID, client.userID, toUserID, offer)
+	})
+}
+
+func (m *Manager) handleAcceptTrade(client *Client, room *Room, msg *IncomingMessage) {
+	tradeIDFloat, ok := msg.Payload["tradeId"].(float64)
+	if !ok {
+		return
+	}
+	tradeID := int64(tradeIDFloat)
+
+	m.handleMultiEvent(client, room, func() ([]*game.Event, error) {
+		return m.engine.AcceptTrade(room.gameID, client.userID, tradeID)
+	})
+}
+
+func (m *Manager) handleDeclineTrade(client *Client, room *Room, msg *IncomingMessage) {
+	tradeIDFloat, ok := msg.Payload["tradeId"].(float64)
+	if !ok {
+		return
+	}
+	tradeID := int64(tradeIDFloat)
+
+	m.handleSingleEvent(client, room, func() (*game.Event, error) {
+		return m.engine.DeclineTrade(room.gameID, client.userID, tradeID)
+	})
+}
+
+func (m *Manager) handleCancelTrade(client *Client, room *Room, msg *IncomingMessage) {
+	tradeIDFloat, ok := msg.Payload["tradeId"].(float64)
+	if !ok {
+		return
+	}
+	tradeID := int64(tradeIDFloat)
+
+	m.handleSingleEvent(client, room, func() (*game.Event, error) {
+		return m.engine.CancelTrade(room.gameID, client.userID, tradeID)
+	})
+}
+
+func (m *Manager) handleChat(client *Client, room *Room, msg *IncomingMessage) {
+	// Extract message text from payload
+	text, ok := msg.Payload["message"].(string)
+	if !ok || text == "" {
+		return
+	}
+
+	// Limit message length
+	if len(text) > 200 {
+		text = text[:200]
+	}
+
+	// Get username from game state
+	state, err := m.engine.GetGameState(room.gameID)
+	if err != nil {
+		return
+	}
+
+	var username string
+	for _, p := range state.Players {
+		if p.UserID == client.userID {
+			username = p.Username
+			break
+		}
+	}
+	if username == "" {
+		return
+	}
+
+	// Broadcast chat message to room
+	room.Broadcast(OutgoingMessage{
+		Type: "chat",
+		Payload: map[string]interface{}{
+			"userId":   client.userID,
+			"username": username,
+			"message":  text,
+		},
+	})
 }
 
 func (m *Manager) handleRollDice(client *Client, room *Room) {
@@ -231,6 +429,22 @@ func (m *Manager) handleSingleEvent(client *Client, room *Room, action func() (*
 	}
 
 	if event != nil {
+		room.Broadcast(OutgoingMessage{
+			Type:    event.Type,
+			Payload: event.Payload,
+		})
+		m.handleEventSideEffects(event, room)
+	}
+}
+
+func (m *Manager) handleMultiEvent(client *Client, room *Room, action func() ([]*game.Event, error)) {
+	events, err := action()
+	if err != nil {
+		m.sendError(client, err)
+		return
+	}
+
+	for _, event := range events {
 		room.Broadcast(OutgoingMessage{
 			Type:    event.Type,
 			Payload: event.Payload,
@@ -290,6 +504,15 @@ func (m *Manager) sendError(client *Client, err error) {
 
 // startTurnTimer starts a timer for the current player's turn
 func (m *Manager) startTurnTimer(gameID, currentPlayerID int64, room *Room) {
+	// Broadcast timer_started event so frontend can display countdown
+	room.Broadcast(OutgoingMessage{
+		Type: "timer_started",
+		Payload: map[string]interface{}{
+			"playerId": currentPlayerID,
+			"duration": int(game.TurnTimeout.Seconds()),
+		},
+	})
+
 	m.turnTimer.StartTurn(gameID, currentPlayerID, func(event *game.Event) {
 		// Broadcast timeout event to room
 		if event != nil {
@@ -304,11 +527,31 @@ func (m *Manager) startTurnTimer(gameID, currentPlayerID int64, room *Room) {
 			} else if event.Type == "turn_timeout" {
 				// Start timer for next player if turn changed
 				if payload, ok := event.Payload.(map[string]interface{}); ok {
-					if nextPlayerID, ok := payload["currentPlayerId"].(int64); ok {
+					// JSON numbers are float64, not int64
+					if nextPlayerIDFloat, ok := payload["currentPlayerId"].(float64); ok {
+						nextPlayerID := int64(nextPlayerIDFloat)
 						m.startTurnTimer(gameID, nextPlayerID, room)
 					}
 				}
 			}
 		}
+	})
+}
+
+func (m *Manager) handlePlaceBid(client *Client, room *Room, msg *IncomingMessage) {
+	amountFloat, ok := msg.Payload["amount"].(float64)
+	if !ok {
+		return
+	}
+	amount := int(amountFloat)
+
+	m.handleMultiEvent(client, room, func() ([]*game.Event, error) {
+		return m.engine.PlaceBid(room.gameID, client.userID, amount)
+	})
+}
+
+func (m *Manager) handlePassAuction(client *Client, room *Room) {
+	m.handleMultiEvent(client, room, func() ([]*game.Event, error) {
+		return m.engine.PassAuction(room.gameID, client.userID)
 	})
 }

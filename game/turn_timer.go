@@ -7,19 +7,24 @@ import (
 )
 
 const TurnTimeout = 60 * time.Second
+const MaxConsecutiveTimeouts = 3
 
 // TurnTimer manages turn timeouts for games
 type TurnTimer struct {
-	timers map[int64]*time.Timer // gameID -> timer
-	mu     sync.Mutex
-	engine *Engine
+	timers           map[int64]*time.Timer    // gameID -> timer
+	timeoutCounts    map[int64]map[int64]int  // gameID -> userID -> consecutive timeout count
+	currentPlayerIDs map[int64]int64          // gameID -> current player ID (for tracking)
+	mu               sync.Mutex
+	engine           *Engine
 }
 
 // NewTurnTimer creates a new turn timer manager
 func NewTurnTimer(engine *Engine) *TurnTimer {
 	return &TurnTimer{
-		timers: make(map[int64]*time.Timer),
-		engine: engine,
+		timers:           make(map[int64]*time.Timer),
+		timeoutCounts:    make(map[int64]map[int64]int),
+		currentPlayerIDs: make(map[int64]int64),
+		engine:           engine,
 	}
 }
 
@@ -35,14 +40,43 @@ func (tt *TurnTimer) StartTurn(gameID, currentPlayerID int64, onTimeout func(*Ev
 		delete(tt.timers, gameID)
 	}
 
+	// Track current player
+	tt.currentPlayerIDs[gameID] = currentPlayerID
+
+	// Initialize timeout counts for game if needed
+	if tt.timeoutCounts[gameID] == nil {
+		tt.timeoutCounts[gameID] = make(map[int64]int)
+	}
+
 	// Create new timer
 	timer := time.AfterFunc(TurnTimeout, func() {
 		log.Printf("Turn timeout for game %d, player %d", gameID, currentPlayerID)
 
-		// Auto-skip the turn (force=true bypasses has_rolled/pending_action checks)
-		event, err := tt.engine.ForceEndTurn(gameID, currentPlayerID)
+		tt.mu.Lock()
+		// Increment timeout count for this player
+		if tt.timeoutCounts[gameID] == nil {
+			tt.timeoutCounts[gameID] = make(map[int64]int)
+		}
+		tt.timeoutCounts[gameID][currentPlayerID]++
+		timeoutCount := tt.timeoutCounts[gameID][currentPlayerID]
+		tt.mu.Unlock()
+
+		log.Printf("Player %d has %d consecutive timeouts", currentPlayerID, timeoutCount)
+
+		var event *Event
+		var err error
+
+		// Check if player should be eliminated (3 consecutive timeouts)
+		if timeoutCount >= MaxConsecutiveTimeouts {
+			log.Printf("Player %d eliminated due to %d consecutive timeouts", currentPlayerID, timeoutCount)
+			event, err = tt.engine.EliminatePlayerForTimeouts(gameID, currentPlayerID)
+		} else {
+			// Auto-skip the turn (force=true bypasses has_rolled/pending_action checks)
+			event, err = tt.engine.ForceEndTurn(gameID, currentPlayerID)
+		}
+
 		if err != nil {
-			log.Printf("Failed to auto-skip turn: %v", err)
+			log.Printf("Failed to handle timeout: %v", err)
 			return
 		}
 
@@ -55,6 +89,7 @@ func (tt *TurnTimer) StartTurn(gameID, currentPlayerID int64, onTimeout func(*Ev
 					"previousPlayerId": payload.PreviousPlayerID,
 					"currentPlayerId":  payload.CurrentPlayerID,
 					"reason":           "timeout",
+					"timeoutCount":     timeoutCount,
 				}
 			} else if payload, ok := event.Payload.(GameFinishedPayload); ok {
 				// Game finished with timeout
@@ -86,6 +121,31 @@ func (tt *TurnTimer) CancelTurn(gameID int64) {
 		timer.Stop()
 		delete(tt.timers, gameID)
 	}
+}
+
+// ResetPlayerTimeouts resets the consecutive timeout count for a player
+// Called when a player takes an action (rolls dice, ends turn manually, etc.)
+func (tt *TurnTimer) ResetPlayerTimeouts(gameID, userID int64) {
+	tt.mu.Lock()
+	defer tt.mu.Unlock()
+
+	if tt.timeoutCounts[gameID] != nil {
+		if tt.timeoutCounts[gameID][userID] > 0 {
+			log.Printf("Reset timeout count for player %d in game %d", userID, gameID)
+			tt.timeoutCounts[gameID][userID] = 0
+		}
+	}
+}
+
+// GetTimeoutCount returns the current consecutive timeout count for a player
+func (tt *TurnTimer) GetTimeoutCount(gameID, userID int64) int {
+	tt.mu.Lock()
+	defer tt.mu.Unlock()
+
+	if tt.timeoutCounts[gameID] == nil {
+		return 0
+	}
+	return tt.timeoutCounts[gameID][userID]
 }
 
 // CancelAll stops all timers (for cleanup/shutdown)
