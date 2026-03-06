@@ -1,220 +1,202 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Claude Code when working with this repository.
 
-## Build & Run Commands
+## Build & Run
 
 ```bash
-# Build the server
-go build -o monopoly.exe .
-
-# Run the server
-./monopoly.exe
-
-# Server starts on http://localhost:8080
-# Press Ctrl+C for graceful shutdown
-
-# Stop server if port is in use (Windows)
-taskkill /F /IM monopoly.exe
+go build -o monopoly.exe .    # Build
+./monopoly.exe                # Run (http://localhost:8080)
+taskkill /F /IM monopoly.exe  # Stop if port in use (Windows)
 ```
 
-## Architecture Overview
+## Project Overview
 
-This is a multiplayer Monopoly backend MVP focused on **infrastructure, not game mechanics**. It demonstrates lobby system, turn management, and real-time communication patterns.
+Multiplayer Monopoly web app. Core game mechanics are fully implemented (dice, movement, properties, rent, taxes, bankruptcy, Go To Jail). **Next phase: advanced rules** (jail escape, doubles re-roll, Chance/Community Chest cards, houses/hotels, mortgage, trading).
 
-### Dependency Injection Flow
+**Known UI issue:** The board center area (game log + controls) renders squished in the top-left corner. Fix this before adding new frontend features.
 
-The application uses constructor-based dependency injection. Dependencies flow from `main.go`:
+## Architecture
 
-```
-main.go
-  ↓ creates
-  ├─ config.Load() → Config
-  ├─ store.NewSQLiteStore(dbPath) → Store interface
-  ├─ auth.NewSessionManager(secret) → SessionManager
-  ├─ auth.NewService(store, sessionManager) → Service
-  ├─ game.NewLobby(store) → Lobby
-  ├─ game.NewEngine(store) → Engine
-  ├─ ws.NewManager(engine) → Manager
-  └─ http.NewServer(authService, lobby, engine, wsManager, store) → Server
-```
-
-All components receive their dependencies via constructors, no globals.
-
-### Key Architectural Patterns
-
-**1. Store Interface Pattern**
-- `store/store.go` defines `Store` interface
-- `SQLiteStore` implements it
-- All data access goes through this interface
-- Makes database swappable without changing business logic
-
-**2. Immutable State Transitions (Game Engine)**
-- `game/engine.go` validates all state changes
-- State transitions: `waiting` → `in_progress` → `finished`
-- Commands: `JoinGame()`, `SetReady()`, `EndTurn()`
-- Each command returns an `Event` for WebSocket broadcasting
-- Engine queries current state, validates action, updates DB, returns event
-
-**3. WebSocket Room-Based Broadcasting**
-- `ws/manager.go` maintains `map[gameID]*Room`
-- Each game gets its own room
-- `ws/room.go` manages per-game client connections
-- When engine returns event, room broadcasts to all connected clients
-- Message flow: Client → WS → Engine → Store → Event → Room.Broadcast() → All Clients
-
-**4. Session Management**
-- Sessions stored in-memory (map with mutex)
-- `auth/session.go` manages session creation/validation
-- HTTP-only cookies prevent XSS
-- Sessions cleared on server restart (MVP simplification)
-
-### Critical State Management
-
-**Game State Lifecycle:**
-1. User creates game → `status='waiting'`, stored in `games` table
-2. Users join → inserted into `game_players` with `player_order`
-3. All click ready → `is_ready=1` for each player
-4. When all ready (min 2 players) → `status='in_progress'`, first player gets `is_current_turn=1`
-5. End turn → clear current player's turn flag, set next player's flag (round-robin via `player_order`)
-
-**WebSocket Connection Flow:**
-1. Client establishes WS connection with session cookie
-2. `ws/manager.go` validates session via auth service
-3. Client added to game's room
-4. Client sends JSON messages: `{"type": "ready", "payload": {...}}`
-5. Manager calls engine methods, broadcasts resulting events
-6. Ping/pong keepalive prevents disconnections
-
-### Database Schema Relationships
+### Dependency Injection (main.go)
 
 ```
-users (1) ──< (M) game_players (M) >── (1) games
-         └─────────────┬─────────────┘
-                       │
-              Composite PK: (game_id, user_id)
+config.Load() → Config
+store.NewSQLiteStore(dbPath) → Store interface
+auth.NewSessionManager(db) → SessionManager  ← takes *sql.DB (DB-backed sessions)
+auth.NewService(store, sessionManager) → Service
+game.NewLobby(store) → Lobby
+game.NewEngine(store) → Engine
+ws.NewManager(engine) → Manager  ← owns TurnTimer internally
+http.NewServer(authService, lobby, engine, wsManager, store) → Server
 ```
 
-- Users can be in multiple games
-- Each game tracks player order and turn state
-- `is_current_turn` is exclusive (only one player per game)
+### Project Structure
 
-## Frontend Architecture (SPA)
-
-The frontend is a Single Page Application using vanilla JavaScript ES6 modules:
-
-**File Structure:**
 ```
-static/
-├── index.html              # Single entry point
-├── css/
-│   └── main.css           # Consolidated styles
-├── js/
-│   ├── app.js             # Main application & routing orchestration
-│   ├── router.js          # Hash-based client router
-│   ├── api.js             # API client with error handling
-│   ├── template.js        # Template loader with caching
-│   └── views/             # View modules (logic only)
-│       ├── login.js       # Login view logic
-│       ├── register.js    # Registration view logic
-│       ├── lobby.js       # Game lobby view logic
-│       └── game.js        # Game room view logic with WebSocket
-└── templates/             # HTML templates (presentation only)
-    ├── login.html         # Login template
-    ├── register.html      # Registration template
-    ├── lobby.html         # Lobby template
-    └── game.html          # Game room template
+auth/           Auth service, input sanitization, DB-backed sessions
+config/         Server configuration
+errors/         Centralized error codes and AppError type
+game/           Engine (state machine), lobby logic, models, board, turn timer
+http/           Handlers, middleware (auth/logging/CORS/security), rate limiting, routing
+static/         SPA frontend (vanilla JS ES6 modules)
+  css/main.css          All styles including Monopoly board CSS grid
+  js/app.js             Main app + routing
+  js/router.js          Hash-based router
+  js/api.js             API client
+  js/template.js        Template loader with cache
+  js/views/*.js         View modules (render + cleanup)
+  templates/*.html      HTML templates
+store/          SQLite store (interfaces, implementations, migrations)
+ws/             WebSocket managers (game rooms + lobby), message types
 ```
 
-**Routing:**
-- Hash-based routing (#/login, #/lobby, #/game?gameId=X)
-- No page reloads - smooth transitions between views
-- Router handles navigation, query parameters, and route protection
+### Key Patterns
 
-**View Pattern:**
-Each view consists of:
-- HTML template in `static/templates/myview.html` (presentation)
-- JavaScript module in `static/js/views/myview.js` (logic)
+**1. Store Interface** — `store/` splits into `AuthStore`, `LobbyStore`, `GameStore` interfaces. All DB access goes through interfaces. `GameStore` includes transaction variants (`*Tx` methods) for atomic operations.
 
-View modules export:
-- `async render(container, router)` - Loads template and sets up event handlers
-- `cleanup()` - Cleans up resources (timers, WebSocket connections)
+**2. Game Engine State Machine** — `game/engine.go` validates all transitions. State: `waiting` → `in_progress` → `finished`. Multi-step state changes (ready→start, endTurn→nextTurn) use SQL transactions via `BeginTx()`/`CommitTx()`/`RollbackTx()`.
 
-**Adding New Frontend Features:**
-1. Create HTML template in `static/templates/myview.html`
-2. Create view module in `static/js/views/myview.js`:
-   ```javascript
-   import { api } from '../api.js';
-   import { templateLoader } from '../template.js';
+**3. Centralized Errors** — `errors/errors.go` defines `AppError` with machine-readable codes (`GAME_NOT_FOUND`, `NOT_YOUR_TURN`, `UNAUTHORIZED`, etc.). HTTP handlers map codes to status codes. WebSocket sends `{"type":"error","payload":{"code":"...","message":"..."}}`.
 
-   export async function render(container, router) {
-       const template = await templateLoader.load('myview');
-       container.innerHTML = template;
-       // Add event listeners here
-   }
+**4. Turn Timer** — `game/turn_timer.go` auto-skips turns after 60s. Managed by `ws/manager.go` via `BroadcastGameEvent()`. Timer starts on `game_started`/`turn_changed`, cancels on `end_turn`/`game_finished`.
 
-   export function cleanup() {
-       // Cleanup code here
-   }
-   ```
-3. Register route in `static/js/app.js`: `router.register('/myview', () => this.loadView(MyView))`
-4. Navigate: `router.navigate('/myview', { param: 'value' })`
+**5. WebSocket Rooms** — `ws/manager.go` maintains `map[gameID]*Room`. Lobby has its own manager (`ws/lobby_manager.go`). Event flow: Client → WS → Engine → Store → Event → Room.Broadcast().
 
-## HTTP API Structure
+**6. DB-Backed Sessions** — `auth/session.go` stores sessions in `sessions` table (persists across restarts). Periodic cleanup of expired sessions.
 
-Routes in `http/server.go`:
-- **Public**: `/api/auth/register`, `/api/auth/login`
-- **Protected** (requires session): `/api/lobby/*`, `/ws/game/:gameId`
-- **Static Assets**: `/css/*`, `/js/*` serve from `./static/`
-- **SPA Fallback**: All other routes serve `index.html` (client-side routing)
+### Database Schema
 
-Middleware chain: `LoggingMiddleware` → `CORSMiddleware` → `AuthMiddleware` (protected routes only)
+```sql
+users (id, username, password_hash, created_at)
+sessions (session_id, user_id, created_at, expires_at)  -- FK users.id CASCADE
+games (id, status, max_players, created_at)
+game_players (game_id, user_id, player_order, is_ready, is_current_turn,
+              has_played_turn, money, position, is_bankrupt, has_rolled, pending_action)
+  -- Composite PK (game_id, user_id), FKs to games and users
+game_properties (game_id, position, owner_id)
+  -- Composite PK (game_id, position), FKs to games and users
+```
 
-`AuthMiddleware` validates session cookie and injects `userID` into request context via `context.WithValue()`.
+Schema lives in `store/migrations.go`. To modify: update `schema` const, delete `monopoly.db`, restart.
 
-## Adding New Game Mechanics
+### Game State (Player & GameState models)
 
-To add Monopoly game logic (dice, properties, money):
+**Player fields:** `UserID`, `Username`, `Order`, `IsReady`, `IsCurrentTurn`, `Money` (starts 1500), `Position` (0–39), `IsBankrupt`, `HasRolled`, `PendingAction` ("buy_or_pass" or "")
 
-1. **Extend `game/models.go`**: Add fields to `Player` (money, position, properties) and `GameState`
-2. **Add commands to `game/engine.go`**: e.g., `RollDice()`, `BuyProperty()`, `PayRent()`
-3. **Extend database schema** in `store/migrations.go`: Add tables for properties, transactions
-4. **Add Store methods** in `store/store.go` interface: e.g., `GetProperties()`, `UpdatePlayerMoney()`
-5. **Add WebSocket message types** in `ws/messages.go`: e.g., `dice_rolled`, `property_bought`
-6. **Handle new messages** in `ws/manager.go` `handleMessage()` switch statement
-7. **Update frontend** `static/js/views/game.js` to handle new event types in `handleWebSocketMessage()`
+**GameState fields:** `ID`, `Status`, `Players`, `CurrentPlayerID`, `MaxPlayers`, `Properties` (map[position→ownerID]), `Board` ([40]BoardSpace)
 
-The architecture is designed for this expansion—state machine pattern makes adding commands straightforward.
+### Game State Lifecycle
 
-## Configuration
+1. Create game → `status='waiting'`
+2. Players join → `game_players` with `player_order`
+3. All ready (min 2) → `status='in_progress'`, first player gets `is_current_turn=1`
+4. Player rolls dice → movement resolved (properties, taxes, jail, etc.), `has_rolled=1`
+5. End turn → round-robin via `player_order`, 60s timer starts
+6. Timer expires → auto-skip with `turn_timeout` event
+7. All but one bankrupt → `status='finished'`
 
-Server configuration in `config/config.go`:
-- Port: `:8080` (hardcoded)
-- DB path: `./monopoly.db` (hardcoded)
-- Session secret: Generated randomly on startup (32 bytes)
+### Implemented Game Mechanics
 
-To change these, modify `config.Load()`. No environment variable support yet (MVP).
+- **Dice & movement**: Two d6, position wraps modulo 40
+- **Passing GO**: Collect $200 when position wraps
+- **Properties** (28), **railroads** (4), **utilities** (2): buy on landing, pay rent to owner
+- **Rent calculation**: Base rent; doubled for color monopoly; railroad scales with count (25/50/100/200); utility is 4× or 10× dice roll
+- **Buy/pass prompt**: `pending_action="buy_or_pass"` blocks end-turn until resolved
+- **Tax spaces**: Income Tax ($200, pos 4), Luxury Tax ($100, pos 38)
+- **Go To Jail**: Position 30 sends player to position 10
+- **Bankruptcy**: Cannot pay → lose all properties, eliminated; last solvent player wins
 
-## Database Migrations
+### WebSocket Message Types
 
-Schema defined in `store/migrations.go` as a single SQL string. Executed on server startup via `db.Exec(schema)`.
+**Game room** (client→server): `roll_dice`, `buy_property`, `pass_property`, `end_turn`
 
-To modify schema:
-1. Update `schema` const in `migrations.go`
-2. Delete `monopoly.db`
-3. Restart server (creates new DB with updated schema)
+**Game room** (server→client): `game_started`, `turn_changed`, `turn_timeout`, `dice_rolled`, `buy_prompt`, `property_bought`, `property_passed`, `rent_paid`, `tax_paid`, `go_to_jail`, `player_bankrupt`, `game_finished`, `error`
 
-No migration versioning system—this is MVP simplification.
+**Lobby** (server→client): `game_created`, `game_deleted`, `player_joined`, `player_left`, `game_status_changed`
 
-## Testing Strategy
+### Frontend
 
-Currently no automated tests. To manually test:
+- SPA with hash-based routing: `#/login`, `#/register`, `#/lobby`, `#/game?gameId=X`
+- Views export `render(container, router)` + `cleanup()`
+- Game view uses a 13×13 CSS grid Monopoly board with 40 spaces
+- Board renders player tokens (multi-token per space), ownership bars, space names/colors
+- Dice result modal, buy/pass prompt modal, game over modal
+- Board center area holds game log + controls (currently has layout issues)
 
-1. Run `./test-api.sh` to test REST API endpoints
-2. Open multiple browsers to test WebSocket synchronization
-3. Check `monopoly.db` with: `sqlite3 monopoly.db "SELECT * FROM game_players;"`
+### HTTP API
 
-When adding tests:
-- Use `store.Store` interface for mocking database
-- Test engine state transitions with in-memory mock store
-- Test WebSocket broadcasting with mock connections
+- **Public**: `POST /api/auth/register`, `POST /api/auth/login`
+- **Protected**: `/api/lobby/*`, `GET /ws/game/:gameId` (WebSocket upgrade, verifies player membership)
+- **Middleware**: Logging → CORS → Auth (protected only). Auth injects `userID` via `context.WithValue()`.
+- **Error responses**: `{"error": "CODE", "message": "user-friendly text"}` with appropriate HTTP status
+
+## Conventions (enforce these)
+
+1. **Always use `errors/` package** for errors returned from engine/auth. Never create ad-hoc error types. Use factory functions (`errors.GameNotFound()`, `errors.NotYourTurn()`, etc.).
+2. **Use transactions for multi-step DB operations.** If a state change touches multiple rows (e.g., setting ready + starting game), wrap in `BeginTx()`/`CommitTx()` with `defer RollbackTx()`.
+3. **HTTP error responses go through `writeError()`** in `http/handlers.go`. It handles `AppError` → HTTP status mapping.
+4. **WebSocket errors use structured format**: `{"type":"error","payload":{"code":"...","message":"..."}}`.
+5. **New game commands follow the pattern**: Engine method validates + updates DB → returns Event → `ws/manager.go` calls `BroadcastGameEvent()` → room broadcasts + timer management.
+6. **Frontend views must clean up** WebSocket connections and timers in `cleanup()`. Use close code 1000 for normal closure.
+7. **Store interface first**: Add interface method to the relevant store interface in `store/`, then implement in the concrete file (`game_store.go`, `lobby_store.go`, `auth_store.go`).
+
+## Next Phase: Advanced Rules
+
+Priority order:
+
+### 1. Jail Mechanics
+Currently `go_to_jail` moves player to position 10 but jail rules aren't enforced.
+- Track `in_jail` and `jail_turns` on `game_players` (add DB columns)
+- On roll while jailed: doubles escape jail; otherwise increment `jail_turns`
+- After 3 failed rolls: pay $50 bail and move normally
+- Add `pay_jail_bail` client command to pay $50 before rolling
+- Add `get_out_of_jail_free` cards (see Chance/Community Chest)
+- New WS events: `jail_escape_roll`, `jail_bail_paid`
+
+### 2. Doubles Re-roll
+When a player rolls doubles they should roll again immediately (up to 3 times).
+- Track `doubles_count` per turn (in-memory in Engine is fine, or add DB column)
+- Three doubles in a row → Go To Jail instead of re-rolling
+- `HasRolled` should reset after a doubles roll so the player can roll again
+- No `end_turn` required between doubles rolls (it happens automatically)
+
+### 3. Chance & Community Chest Cards
+- Define card decks in `game/cards.go` (shuffled on game start)
+- Store deck state in DB: `game_card_decks (game_id, deck_type, card_order, next_index)`
+- Card effects reuse existing engine methods (move, collect money, pay money, go to jail, etc.)
+- New WS event: `card_drawn` with card text and effect
+- "Get Out of Jail Free" card: store on player, use before roll
+
+### 4. Houses & Hotels
+- Add `game_improvements (game_id, position, count)` table (count 1–5; 5 = hotel)
+- `BuyHouse(gameID, userID, position)` engine command
+- Rent multipliers per improvement level defined in `game/board.go` BoardSpace
+- Limit: 32 houses / 12 hotels total per game (supply constraint)
+- New WS events: `house_built`, `hotel_built`
+
+### 5. Mortgage System
+- Add `mortgaged` flag to `game_properties`
+- `MortgageProperty(gameID, userID, position)` — player receives half price
+- `UnmortgageProperty(gameID, userID, position)` — pay 110% to lift
+- Mortgaged properties: owner collects no rent
+- New WS events: `property_mortgaged`, `property_unmortgaged`
+
+### 6. Trading
+- Two-phase: propose + accept/decline
+- `ProposeTrade(gameID, fromUserID, toUserID, offer TradeOffer)` engine command
+- Store pending trade in `game_trades (game_id, from_user, to_user, offer_json, status)`
+- New WS events: `trade_proposed`, `trade_accepted`, `trade_declined`
+
+## Testing
+
+No automated tests yet. Manual testing:
+- `./test-api.sh` for REST endpoints
+- Multiple browsers for WebSocket sync
+- `sqlite3 monopoly.db "SELECT * FROM game_players;"`
+
+When adding tests: mock via store interfaces, test engine state transitions, test WS with mock connections.
+
+## Config
+
+`config/config.go`: Port `:8080`, DB `./monopoly.db`, session secret random 32 bytes, max 25 open / 5 idle DB conns.

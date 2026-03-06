@@ -2,9 +2,9 @@ package http
 
 import (
 	"encoding/json"
-	"errors"
 	"log"
 	"monopoly/auth"
+	"monopoly/errors"
 	"monopoly/game"
 	"monopoly/store"
 	"monopoly/ws"
@@ -54,6 +54,49 @@ func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 	}
 }
 
+// writeError writes an error response with proper handling of AppError types
+func writeError(w http.ResponseWriter, err error) {
+	var appErr *errors.AppError
+	if e, ok := err.(*errors.AppError); ok {
+		appErr = e
+	} else {
+		// Wrap unknown errors
+		appErr = errors.InternalError(err.Error())
+	}
+
+	// Log internal details
+	if appErr.Detail != "" {
+		log.Printf("Error [%s]: %s (detail: %s)", appErr.Code, appErr.Message, appErr.Detail)
+	} else {
+		log.Printf("Error [%s]: %s", appErr.Code, appErr.Message)
+	}
+
+	// Determine HTTP status code based on error code
+	statusCode := http.StatusInternalServerError
+	switch appErr.Code {
+	case errors.ErrCodeUnauthorized:
+		statusCode = http.StatusUnauthorized
+	case errors.ErrCodeInvalidCredentials:
+		statusCode = http.StatusUnauthorized
+	case errors.ErrCodeNotFound, errors.ErrCodeGameNotFound, errors.ErrCodeUserNotFound:
+		statusCode = http.StatusNotFound
+	case errors.ErrCodeBadRequest, errors.ErrCodeInvalidUsername, errors.ErrCodeInvalidPassword:
+		statusCode = http.StatusBadRequest
+	case errors.ErrCodeForbidden, errors.ErrCodeNotPlayer:
+		statusCode = http.StatusForbidden
+	case errors.ErrCodeGameFull, errors.ErrCodeGameStarted, errors.ErrCodeAlreadyInGame,
+		errors.ErrCodeNotInGame, errors.ErrCodeNotYourTurn, errors.ErrCodeUserExists,
+		errors.ErrCodeAlreadyRolled, errors.ErrCodeMustRoll, errors.ErrCodePendingAction,
+		errors.ErrCodeCannotBuy, errors.ErrCodeInsufficientFunds, errors.ErrCodePlayerBankrupt:
+		statusCode = http.StatusBadRequest
+	}
+
+	writeJSON(w, statusCode, map[string]interface{}{
+		"error":   string(appErr.Code),
+		"message": appErr.UserMessage(),
+	})
+}
+
 // getUserOrError retrieves a user by ID and writes an HTTP error if not found
 func (h *Handlers) getUserOrError(w http.ResponseWriter, userID int64) (*store.User, bool) {
 	user, err := h.authStore.GetUserByID(userID)
@@ -70,6 +113,25 @@ func (h *Handlers) getUserOrError(w http.ResponseWriter, userID int64) (*store.U
 	return user, true
 }
 
+// checkUserInGame verifies if user is a player in the specified game
+// Returns true if user is in game, false otherwise
+func (h *Handlers) checkUserInGame(gameID, userID int64) (bool, error) {
+	gameState, err := h.engine.GetGameState(gameID)
+	if err != nil {
+		return false, err
+	}
+	if gameState == nil {
+		return false, errors.GameNotFound()
+	}
+
+	for _, player := range gameState.Players {
+		if player.UserID == userID {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // broadcastLobbyUpdate sends personalized full state updates to all lobby clients
 // This is kept for backward compatibility but should be avoided in favor of specific events
 func (h *Handlers) broadcastLobbyUpdate() {
@@ -84,18 +146,12 @@ func (h *Handlers) Register(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		writeError(w, errors.BadRequest("Invalid request body"))
 		return
 	}
 
 	if err := h.authService.Register(req.Username, req.Password); err != nil {
-		switch {
-		case errors.Is(err, auth.ErrInvalidUsername), errors.Is(err, auth.ErrInvalidPassword), errors.Is(err, auth.ErrUserExists):
-			http.Error(w, err.Error(), http.StatusBadRequest)
-		default:
-			log.Printf("Register error: %v", err)
-			http.Error(w, "Registration failed", http.StatusInternalServerError)
-		}
+		writeError(w, err)
 		return
 	}
 
@@ -109,18 +165,13 @@ func (h *Handlers) Login(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		writeError(w, errors.BadRequest("Invalid request body"))
 		return
 	}
 
 	sessionID, err := h.authService.Login(req.Username, req.Password)
 	if err != nil {
-		if err == auth.ErrInvalidCredentials {
-			http.Error(w, err.Error(), http.StatusUnauthorized)
-		} else {
-			log.Printf("Login error: %v", err)
-			http.Error(w, "Login failed", http.StatusInternalServerError)
-		}
+		writeError(w, err)
 		return
 	}
 
@@ -244,14 +295,8 @@ func (h *Handlers) JoinGame(w http.ResponseWriter, r *http.Request) {
 		// Game started! Broadcast to game room and lobby
 		log.Printf("Game %d started (full)", gameID)
 
-		// Broadcast to game room (if anyone connected)
-		gameRoom := h.wsManager.GetRoom(gameID)
-		if gameRoom != nil {
-			go gameRoom.Broadcast(ws.OutgoingMessage{
-				Type:    event.Type,
-				Payload: event.Payload,
-			})
-		}
+		// Broadcast to game room with turn timer handling
+		go h.wsManager.BroadcastGameEvent(gameID, event)
 
 		// Broadcast status change to lobby
 		go h.lobbyManager.BroadcastGameStatusChange(gameID, "in_progress")
@@ -342,6 +387,20 @@ func (h *Handlers) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 	userID, ok := GetUserIDFromContext(r.Context())
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	// Check if user is a player in this game
+	isPlayer, err := h.checkUserInGame(gameID, userID)
+	if err != nil {
+		log.Printf("Failed to check game authorization: %v", err)
+		http.Error(w, "Failed to verify game access", http.StatusInternalServerError)
+		return
+	}
+
+	if !isPlayer {
+		log.Printf("User %d attempted to access game %d without being a player", userID, gameID)
+		http.Error(w, "You are not a player in this game", http.StatusForbidden)
 		return
 	}
 

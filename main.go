@@ -37,7 +37,7 @@ func main() {
 	gameStore := store.NewGameStore(db)
 
 	// Initialize services
-	sessionManager := auth.NewSessionManager()
+	sessionManager := auth.NewSessionManager(db)
 	authService := auth.NewService(authStore, sessionManager)
 	lobby := game.NewLobby(lobbyStore)
 	engine := game.NewEngine(gameStore)

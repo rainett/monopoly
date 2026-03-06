@@ -33,7 +33,7 @@ export function cleanup() {
 
     if (ws) {
         ws.onclose = null;
-        ws.close();
+        ws.close(1000, 'Navigation'); // Send normal closure code
         ws = null;
     }
 }
@@ -493,6 +493,18 @@ function handleGameStatusChanged(container, payload, router) {
         return;
     }
 
+    // Remove finished games from the lobby
+    if (payload.status === 'finished') {
+        gameElement.remove();
+
+        // Check if games list is now empty
+        const gamesListDiv = container.querySelector('#gamesList');
+        if (gamesListDiv && gamesListDiv.children.length === 0) {
+            gamesListDiv.innerHTML = '<div class="empty-state">No games available. Create one!</div>';
+        }
+        return;
+    }
+
     const statusElement = gameElement.querySelector('.game-status');
     if (statusElement) {
         statusElement.textContent = payload.status.toUpperCase();
@@ -517,13 +529,6 @@ function handleGameStatusChanged(container, payload, router) {
                     router.navigate(`/game?gameId=${payload.gameId}`);
                 });
             }
-        }
-    } else if (payload.status === 'finished') {
-        // Game finished - show as finished in the list
-        const statusElement = gameElement.querySelector('.game-status');
-        if (statusElement) {
-            statusElement.textContent = 'FINISHED';
-            statusElement.className = 'game-status finished';
         }
     }
 }

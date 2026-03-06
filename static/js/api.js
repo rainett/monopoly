@@ -24,20 +24,33 @@ class ApiClient {
             const response = await fetch(`${this.baseURL}${endpoint}`, config);
             clearTimeout(timeoutId);
 
-            if (response.status === 401) {
-                // Don't redirect on login/register endpoints, just return the error
-                if (endpoint !== '/api/auth/login' && endpoint !== '/api/auth/register') {
-                    this.handleUnauthorized();
-                    throw new Error('Unauthorized');
-                }
-                // For login/register, get the actual error message
-                const errorText = await response.text();
-                throw new Error(errorText || 'Invalid credentials');
-            }
-
             if (!response.ok) {
-                const errorText = await response.text();
-                throw new Error(errorText || `HTTP ${response.status}`);
+                // Try to parse error as JSON first
+                const contentType = response.headers.get('content-type');
+                let errorMessage = `HTTP ${response.status}`;
+
+                try {
+                    if (contentType && contentType.includes('application/json')) {
+                        const errorData = await response.json();
+                        // Use the user-friendly message from structured error
+                        errorMessage = errorData.message || errorData.error || errorMessage;
+                    } else {
+                        errorMessage = await response.text() || errorMessage;
+                    }
+                } catch (e) {
+                    // If parsing fails, use the status
+                    console.warn('Failed to parse error response:', e);
+                }
+
+                // Handle unauthorized specially
+                if (response.status === 401) {
+                    // Don't redirect on login/register endpoints
+                    if (endpoint !== '/api/auth/login' && endpoint !== '/api/auth/register') {
+                        this.handleUnauthorized();
+                    }
+                }
+
+                throw new Error(errorMessage);
             }
 
             const contentType = response.headers.get('content-type');

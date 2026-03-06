@@ -1,19 +1,12 @@
 package auth
 
 import (
-	"errors"
 	"fmt"
+	"monopoly/errors"
 	"monopoly/store"
 	"regexp"
 
 	"golang.org/x/crypto/bcrypt"
-)
-
-var (
-	ErrInvalidUsername    = errors.New("username must be alphanumeric and 3-20 characters")
-	ErrInvalidPassword    = errors.New("password must be at least 8 characters and contain both letters and numbers")
-	ErrUserExists         = errors.New("username already exists")
-	ErrInvalidCredentials = errors.New("invalid username or password")
 )
 
 type Service struct {
@@ -42,7 +35,7 @@ func (s *Service) Register(username, password string) error {
 		return fmt.Errorf("failed to check existing user: %w", err)
 	}
 	if existingUser != nil {
-		return ErrUserExists
+		return errors.UserExists()
 	}
 
 	passwordHash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
@@ -66,11 +59,11 @@ func (s *Service) Login(username, password string) (string, error) {
 		return "", fmt.Errorf("failed to get user: %w", err)
 	}
 	if user == nil {
-		return "", ErrInvalidCredentials
+		return "", errors.InvalidCredentials()
 	}
 
 	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)); err != nil {
-		return "", ErrInvalidCredentials
+		return "", errors.InvalidCredentials()
 	}
 
 	sessionID, err := s.session.CreateSession(user.ID)
@@ -95,18 +88,18 @@ func (s *Service) GetSessionManager() *SessionManager {
 
 func validateUsername(username string) error {
 	if len(username) < 3 || len(username) > 20 {
-		return ErrInvalidUsername
+		return errors.InvalidUsername()
 	}
 	matched, _ := regexp.MatchString("^[a-zA-Z0-9]+$", username)
 	if !matched {
-		return ErrInvalidUsername
+		return errors.InvalidUsername()
 	}
 	return nil
 }
 
 func validatePassword(password string) error {
 	if len(password) < 8 {
-		return ErrInvalidPassword
+		return errors.InvalidPassword()
 	}
 
 	hasLetter := false
@@ -122,7 +115,7 @@ func validatePassword(password string) error {
 	}
 
 	if !hasLetter || !hasNumber {
-		return ErrInvalidPassword
+		return errors.InvalidPassword()
 	}
 
 	return nil

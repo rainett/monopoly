@@ -1,25 +1,98 @@
-<div class="header">
-    <h1>Game <span id="gameId"></span></h1>
-    <button class="back" id="backBtn">Back to Lobby</button>
-</div>
-
-<div class="game-container">
-    <div class="panel">
+<div class="game-view">
+    <!-- Players Panel -->
+    <div class="players-panel">
         <h2>Players</h2>
-        <div id="playersList"></div>
+        <div class="players-scroll" id="playersList"></div>
     </div>
 
-    <div class="panel">
-        <div class="game-status">
-            <div>Status: <span id="gameStatus"></span></div>
-            <div id="currentTurn"></div>
+    <!-- Main Game Area -->
+    <div class="game-main">
+        <div class="game-header">
+            <div class="game-title">Game <span id="gameId"></span></div>
+            <button class="back" id="backBtn">Back to Lobby</button>
         </div>
 
-        <div class="controls">
-            <button id="endTurnBtn" disabled>End Turn</button>
-        </div>
+        <!-- Monopoly Board - flat CSS Grid -->
+        <div class="board">
+            <!-- Corners -->
+            <div class="space corner space-free-parking" data-space="20"><div class="space-inner"><div class="space-name">Free Parking</div></div></div>
+            <div class="space corner space-go-to-jail" data-space="30"><div class="space-inner"><div class="space-name">Go to Jail</div></div></div>
+            <div class="space corner space-jail" data-space="10"><div class="space-inner"><div class="space-name">Jail</div></div></div>
+            <div class="space corner space-go" data-space="0"><div class="space-inner"><div class="space-name">GO</div></div></div>
 
-        <h3>Game Log</h3>
-        <div class="game-log" id="gameLog"></div>
+            <!-- Top row (left to right: 21-29) -->
+            <div class="space property top-1" data-space="21"><div class="space-inner"><div class="space-color"></div><div class="space-name"></div></div></div>
+            <div class="space special top-2" data-space="22"><div class="space-inner"><div class="space-name"></div></div></div>
+            <div class="space property top-3" data-space="23"><div class="space-inner"><div class="space-color"></div><div class="space-name"></div></div></div>
+            <div class="space property top-4" data-space="24"><div class="space-inner"><div class="space-color"></div><div class="space-name"></div></div></div>
+            <div class="space railroad top-5" data-space="25"><div class="space-inner"><div class="space-name"></div></div></div>
+            <div class="space property top-6" data-space="26"><div class="space-inner"><div class="space-color"></div><div class="space-name"></div></div></div>
+            <div class="space property top-7" data-space="27"><div class="space-inner"><div class="space-color"></div><div class="space-name"></div></div></div>
+            <div class="space utility top-8" data-space="28"><div class="space-inner"><div class="space-name"></div></div></div>
+            <div class="space property top-9" data-space="29"><div class="space-inner"><div class="space-color"></div><div class="space-name"></div></div></div>
+
+            <!-- Right column (top to bottom: 31-39) -->
+            <div class="space property right-1" data-space="31"><div class="space-inner"><div class="space-color"></div><div class="space-name"></div></div></div>
+            <div class="space special right-2" data-space="32"><div class="space-inner"><div class="space-name"></div></div></div>
+            <div class="space property right-3" data-space="33"><div class="space-inner"><div class="space-color"></div><div class="space-name"></div></div></div>
+            <div class="space property right-4" data-space="34"><div class="space-inner"><div class="space-color"></div><div class="space-name"></div></div></div>
+            <div class="space railroad right-5" data-space="35"><div class="space-inner"><div class="space-name"></div></div></div>
+            <div class="space special right-6" data-space="36"><div class="space-inner"><div class="space-name"></div></div></div>
+            <div class="space property right-7" data-space="37"><div class="space-inner"><div class="space-color"></div><div class="space-name"></div></div></div>
+            <div class="space special right-8" data-space="38"><div class="space-inner"><div class="space-name"></div></div></div>
+            <div class="space property right-9" data-space="39"><div class="space-inner"><div class="space-color"></div><div class="space-name"></div></div></div>
+
+            <!-- Bottom row (right to left: 9-1) -->
+            <div class="space property bottom-1" data-space="9"><div class="space-inner"><div class="space-color"></div><div class="space-name"></div></div></div>
+            <div class="space property bottom-2" data-space="8"><div class="space-inner"><div class="space-color"></div><div class="space-name"></div></div></div>
+            <div class="space special bottom-3" data-space="7"><div class="space-inner"><div class="space-name"></div></div></div>
+            <div class="space property bottom-4" data-space="6"><div class="space-inner"><div class="space-color"></div><div class="space-name"></div></div></div>
+            <div class="space railroad bottom-5" data-space="5"><div class="space-inner"><div class="space-name"></div></div></div>
+            <div class="space special bottom-6" data-space="4"><div class="space-inner"><div class="space-name"></div></div></div>
+            <div class="space property bottom-7" data-space="3"><div class="space-inner"><div class="space-color"></div><div class="space-name"></div></div></div>
+            <div class="space special bottom-8" data-space="2"><div class="space-inner"><div class="space-name"></div></div></div>
+            <div class="space property bottom-9" data-space="1"><div class="space-inner"><div class="space-color"></div><div class="space-name"></div></div></div>
+
+            <!-- Left column (bottom to top: 19-11) -->
+            <div class="space property left-1" data-space="19"><div class="space-inner"><div class="space-color"></div><div class="space-name"></div></div></div>
+            <div class="space property left-2" data-space="18"><div class="space-inner"><div class="space-color"></div><div class="space-name"></div></div></div>
+            <div class="space special left-3" data-space="17"><div class="space-inner"><div class="space-name"></div></div></div>
+            <div class="space property left-4" data-space="16"><div class="space-inner"><div class="space-color"></div><div class="space-name"></div></div></div>
+            <div class="space railroad left-5" data-space="15"><div class="space-inner"><div class="space-name"></div></div></div>
+            <div class="space property left-6" data-space="14"><div class="space-inner"><div class="space-color"></div><div class="space-name"></div></div></div>
+            <div class="space utility left-7" data-space="13"><div class="space-inner"><div class="space-name"></div></div></div>
+            <div class="space property left-8" data-space="12"><div class="space-inner"><div class="space-color"></div><div class="space-name"></div></div></div>
+            <div class="space property left-9" data-space="11"><div class="space-inner"><div class="space-color"></div><div class="space-name"></div></div></div>
+
+            <!-- Center Area -->
+            <div class="board-center">
+                <div class="center-panel">
+                    <h3>Log & Chat</h3>
+                    <div class="game-log" id="gameLog"></div>
+                    <div class="chat-controls">
+                        <input type="text" id="chatInput" placeholder="Type a message..." />
+                        <button id="sendChatBtn">Send</button>
+                    </div>
+                </div>
+                <div class="game-controls">
+                    <div class="status-info">
+                        <div>Status: <span id="gameStatus"></span></div>
+                        <div id="currentTurn"></div>
+                        <div id="diceResult" class="dice-result" style="display:none;"></div>
+                    </div>
+                    <div class="action-buttons">
+                        <button id="rollDiceBtn" disabled>Roll Dice</button>
+                        <div id="buyPrompt" class="buy-prompt" style="display:none;">
+                            <div id="buyPromptText"></div>
+                            <div class="buy-buttons">
+                                <button id="buyBtn">Buy</button>
+                                <button id="passBtn" class="secondary-btn">Pass</button>
+                            </div>
+                        </div>
+                        <button id="endTurnBtn" disabled>End Turn</button>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
 </div>

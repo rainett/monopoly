@@ -231,7 +231,7 @@ func (s *SQLiteLobbyStore) GetUserCurrentGame(userID int64) (*LobbyGameDTO, erro
 		JOIN games g ON gp_user.game_id = g.id
 		JOIN game_players gp ON gp.game_id = g.id
 		JOIN users u ON gp.user_id = u.id
-		WHERE gp_user.user_id = ?
+		WHERE gp_user.user_id = ? AND g.status != 'finished'
 		ORDER BY gp.player_order
 	`, userID)
 	if err != nil {
@@ -274,9 +274,10 @@ func (s *SQLiteLobbyStore) GetUserCurrentGame(userID int64) (*LobbyGameDTO, erro
 func (s *SQLiteLobbyStore) IsUserInGame(userID int64) (bool, int64, error) {
 	var gameID int64
 	err := s.db.QueryRow(`
-		SELECT game_id
-		FROM game_players
-		WHERE user_id = ?
+		SELECT gp.game_id
+		FROM game_players gp
+		JOIN games g ON gp.game_id = g.id
+		WHERE gp.user_id = ? AND g.status != 'finished'
 		LIMIT 1
 	`, userID).Scan(&gameID)
 	if err == sql.ErrNoRows {

@@ -2,9 +2,10 @@ package auth
 
 import (
 	"crypto/rand"
+	"database/sql"
 	"encoding/base64"
+	"log"
 	"net/http"
-	"sync"
 	"time"
 )
 
@@ -20,13 +21,12 @@ type Session struct {
 }
 
 type SessionManager struct {
-	sessions map[string]*Session
-	mu       sync.RWMutex
+	db *sql.DB
 }
 
-func NewSessionManager() *SessionManager {
+func NewSessionManager(db *sql.DB) *SessionManager {
 	sm := &SessionManager{
-		sessions: make(map[string]*Session),
+		db: db,
 	}
 	go sm.cleanupExpiredSessions()
 	return sm
@@ -38,39 +38,58 @@ func (sm *SessionManager) CreateSession(userID int64) (string, error) {
 		return "", err
 	}
 
-	sm.mu.Lock()
-	sm.sessions[sessionID] = &Session{
-		UserID:    userID,
-		ExpiresAt: time.Now().Add(sessionDuration),
+	expiresAt := time.Now().Add(sessionDuration)
+
+	_, err = sm.db.Exec(`
+		INSERT INTO sessions (session_id, user_id, expires_at)
+		VALUES (?, ?, ?)
+	`, sessionID, userID, expiresAt)
+
+	if err != nil {
+		return "", err
 	}
-	sm.mu.Unlock()
 
 	return sessionID, nil
 }
 
 func (sm *SessionManager) GetUserID(sessionID string) (int64, bool) {
-	sm.mu.RLock()
-	session, exists := sm.sessions[sessionID]
-	sm.mu.RUnlock()
+	var userID int64
+	var expiresAt time.Time
 
-	if !exists {
+	err := sm.db.QueryRow(`
+		SELECT user_id, expires_at
+		FROM sessions
+		WHERE session_id = ?
+	`, sessionID).Scan(&userID, &expiresAt)
+
+	if err == sql.ErrNoRows {
+		return 0, false
+	}
+
+	if err != nil {
+		log.Printf("Error getting session: %v", err)
 		return 0, false
 	}
 
 	// Check if session is expired
-	if time.Now().After(session.ExpiresAt) {
+	if time.Now().After(expiresAt) {
 		// Delete expired session
 		sm.DeleteSession(sessionID)
 		return 0, false
 	}
 
-	return session.UserID, true
+	return userID, true
 }
 
 func (sm *SessionManager) DeleteSession(sessionID string) {
-	sm.mu.Lock()
-	delete(sm.sessions, sessionID)
-	sm.mu.Unlock()
+	_, err := sm.db.Exec(`
+		DELETE FROM sessions
+		WHERE session_id = ?
+	`, sessionID)
+
+	if err != nil {
+		log.Printf("Error deleting session: %v", err)
+	}
 }
 
 func (sm *SessionManager) SetSessionCookie(w http.ResponseWriter, sessionID string) {
@@ -110,14 +129,18 @@ func (sm *SessionManager) cleanupExpiredSessions() {
 	defer ticker.Stop()
 
 	for range ticker.C {
-		sm.mu.Lock()
-		now := time.Now()
-		for id, session := range sm.sessions {
-			if now.After(session.ExpiresAt) {
-				delete(sm.sessions, id)
+		result, err := sm.db.Exec(`
+			DELETE FROM sessions
+			WHERE expires_at < ?
+		`, time.Now())
+
+		if err != nil {
+			log.Printf("Error cleaning up expired sessions: %v", err)
+		} else {
+			if rows, err := result.RowsAffected(); err == nil && rows > 0 {
+				log.Printf("Cleaned up %d expired sessions", rows)
 			}
 		}
-		sm.mu.Unlock()
 	}
 }
 

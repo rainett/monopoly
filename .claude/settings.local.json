@@ -14,7 +14,8 @@
       "Bash(chmod:*)",
       "Bash(findstr:*)",
       "Bash(ping:*)",
-      "Bash(del:*)"
+      "Bash(del:*)",
+      "Bash(which node:*)"
     ]
   }
 }

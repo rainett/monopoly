@@ -3,6 +3,7 @@ package ws
 import (
 	"encoding/json"
 	"log"
+	"monopoly/errors"
 	"monopoly/game"
 	"sync"
 	"time"
@@ -21,15 +22,18 @@ type Manager struct {
 	rooms        map[int64]*Room
 	engine       *game.Engine
 	lobbyManager *LobbyManager
+	turnTimer    *game.TurnTimer
 	mu           sync.RWMutex
 }
 
 func NewManager(engine *game.Engine, lobbyManager *LobbyManager) *Manager {
-	return &Manager{
+	m := &Manager{
 		rooms:        make(map[int64]*Room),
 		engine:       engine,
 		lobbyManager: lobbyManager,
 	}
+	m.turnTimer = game.NewTurnTimer(engine)
+	return m
 }
 
 func (m *Manager) GetRoom(gameID int64) *Room {
@@ -42,6 +46,29 @@ func (m *Manager) GetRoom(gameID int64) *Room {
 		m.rooms[gameID] = room
 	}
 	return room
+}
+
+// BroadcastGameEvent broadcasts a game event to a room and handles turn timer
+func (m *Manager) BroadcastGameEvent(gameID int64, event *game.Event) {
+	room := m.GetRoom(gameID)
+
+	room.Broadcast(OutgoingMessage{
+		Type:    event.Type,
+		Payload: event.Payload,
+	})
+
+	// Handle turn timer based on event type
+	if event.Type == "game_started" {
+		if payload, ok := event.Payload.(game.GameStartedPayload); ok {
+			m.startTurnTimer(gameID, payload.CurrentPlayerID, room)
+		}
+	} else if event.Type == "turn_changed" {
+		if payload, ok := event.Payload.(game.TurnChangedPayload); ok {
+			m.startTurnTimer(gameID, payload.CurrentPlayerID, room)
+		}
+	} else if event.Type == "game_finished" {
+		m.turnTimer.CancelTurn(gameID)
+	}
 }
 
 func (m *Manager) HandleConnection(conn *websocket.Conn, gameID, userID int64) {
@@ -75,7 +102,7 @@ func (m *Manager) readPump(client *Client, room *Room) {
 	for {
 		_, message, err := client.conn.ReadMessage()
 		if err != nil {
-			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
+			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure, websocket.CloseNormalClosure, websocket.CloseNoStatusReceived) {
 				log.Printf("WebSocket error: %v", err)
 			}
 			break
@@ -159,30 +186,47 @@ func (m *Manager) cleanupRoomIfNeeded(gameID int64) {
 }
 
 func (m *Manager) handleMessage(client *Client, room *Room, msg *IncomingMessage) {
-	var event *game.Event
-	var err error
-
 	switch msg.Type {
+	case "roll_dice":
+		m.handleRollDice(client, room)
+	case "buy_property":
+		m.handleSingleEvent(client, room, func() (*game.Event, error) {
+			return m.engine.BuyProperty(room.gameID, client.userID)
+		})
+	case "pass_property":
+		m.handleSingleEvent(client, room, func() (*game.Event, error) {
+			return m.engine.PassProperty(room.gameID, client.userID)
+		})
 	case "end_turn":
-		event, err = m.engine.EndTurn(room.gameID, client.userID)
-
+		m.turnTimer.CancelTurn(room.gameID)
+		m.handleSingleEvent(client, room, func() (*game.Event, error) {
+			return m.engine.EndTurn(room.gameID, client.userID)
+		})
 	default:
 		log.Printf("Unknown message type: %s", msg.Type)
+	}
+}
+
+func (m *Manager) handleRollDice(client *Client, room *Room) {
+	events, err := m.engine.RollDice(room.gameID, client.userID)
+	if err != nil {
+		m.sendError(client, err)
 		return
 	}
 
+	for _, event := range events {
+		room.Broadcast(OutgoingMessage{
+			Type:    event.Type,
+			Payload: event.Payload,
+		})
+		m.handleEventSideEffects(event, room)
+	}
+}
+
+func (m *Manager) handleSingleEvent(client *Client, room *Room, action func() (*game.Event, error)) {
+	event, err := action()
 	if err != nil {
-		log.Printf("Error handling message: %v", err)
-		// Send error to client
-		errorMsg := OutgoingMessage{
-			Type:    "error",
-			Payload: map[string]string{"message": err.Error()},
-		}
-		data, _ := json.Marshal(errorMsg)
-		select {
-		case client.send <- data:
-		default:
-		}
+		m.sendError(client, err)
 		return
 	}
 
@@ -191,12 +235,80 @@ func (m *Manager) handleMessage(client *Client, room *Room, msg *IncomingMessage
 			Type:    event.Type,
 			Payload: event.Payload,
 		})
-
-		// Notify lobby of important game status changes
-		if event.Type == "game_started" {
-			go m.lobbyManager.BroadcastGameStatusChange(room.gameID, "in_progress")
-		} else if event.Type == "game_finished" {
-			go m.lobbyManager.BroadcastGameStatusChange(room.gameID, "finished")
-		}
+		m.handleEventSideEffects(event, room)
 	}
+}
+
+func (m *Manager) handleEventSideEffects(event *game.Event, room *Room) {
+	if event == nil {
+		return
+	}
+
+	switch event.Type {
+	case "game_started":
+		if payload, ok := event.Payload.(game.GameStartedPayload); ok {
+			m.startTurnTimer(room.gameID, payload.CurrentPlayerID, room)
+		}
+		go m.lobbyManager.BroadcastGameStatusChange(room.gameID, "in_progress")
+	case "turn_changed":
+		if payload, ok := event.Payload.(game.TurnChangedPayload); ok {
+			m.startTurnTimer(room.gameID, payload.CurrentPlayerID, room)
+		}
+	case "game_finished":
+		m.turnTimer.CancelTurn(room.gameID)
+		go m.lobbyManager.BroadcastGameStatusChange(room.gameID, "finished")
+	}
+}
+
+func (m *Manager) sendError(client *Client, err error) {
+	var userMessage string
+	var errorCode string
+
+	if appErr, ok := err.(*errors.AppError); ok {
+		userMessage = appErr.UserMessage()
+		errorCode = string(appErr.Code)
+		log.Printf("WS Error [%s]: %s", appErr.Code, appErr.Error())
+	} else {
+		userMessage = "An error occurred. Please try again."
+		errorCode = "UNKNOWN_ERROR"
+		log.Printf("WS Error: %v", err)
+	}
+
+	errorMsg := OutgoingMessage{
+		Type: "error",
+		Payload: map[string]string{
+			"code":    errorCode,
+			"message": userMessage,
+		},
+	}
+	data, _ := json.Marshal(errorMsg)
+	select {
+	case client.send <- data:
+	default:
+	}
+}
+
+// startTurnTimer starts a timer for the current player's turn
+func (m *Manager) startTurnTimer(gameID, currentPlayerID int64, room *Room) {
+	m.turnTimer.StartTurn(gameID, currentPlayerID, func(event *game.Event) {
+		// Broadcast timeout event to room
+		if event != nil {
+			room.Broadcast(OutgoingMessage{
+				Type:    event.Type,
+				Payload: event.Payload,
+			})
+
+			// If game finished due to timeout, notify lobby
+			if event.Type == "game_finished" {
+				go m.lobbyManager.BroadcastGameStatusChange(gameID, "finished")
+			} else if event.Type == "turn_timeout" {
+				// Start timer for next player if turn changed
+				if payload, ok := event.Payload.(map[string]interface{}); ok {
+					if nextPlayerID, ok := payload["currentPlayerId"].(int64); ok {
+						m.startTurnTimer(gameID, nextPlayerID, room)
+					}
+				}
+			}
+		}
+	})
 }
