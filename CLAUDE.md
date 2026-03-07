@@ -73,14 +73,16 @@ ws/             WebSocket managers (game rooms + lobby), message types
 - 60 second timeout per turn (configurable via `TurnTimeout` constant)
 - Tracks consecutive timeouts per player (resets when player takes action)
 - 3 consecutive timeouts = player eliminated (auto-bankrupted)
-- Frontend receives `timer_started` event with duration, displays ASCII countdown bar
+- Frontend receives `timer_started` event with duration, displays UTF-8 block progress bar
+- Timer shown in action box when your turn, in players list when other's turn
+- Timer also applies to auction bidders (each bid/pass triggers timer for next bidder)
 - Timer cancels on manual `end_turn` or `game_finished`
 
 **5. WebSocket Rooms** — `ws/manager.go` maintains `map[gameID]*Room`. Lobby has its own manager (`ws/lobby_manager.go`). Event flow: Client → WS → Engine → Store → Event → Room.Broadcast().
 
 **6. DB-Backed Sessions** — `auth/session.go` stores sessions in `sessions` table (persists across restarts). Periodic cleanup of expired sessions.
 
-**7. Auction System** — `game/engine.go` maintains `activeAuctions map[int64]*Auction`. When a player passes on a property, an auction starts with round-robin bidding among all non-bankrupt players.
+**7. Auction System** — `game/engine.go` maintains `activeAuctions map[int64]*Auction`. When a player passes on a property, an auction starts with round-robin bidding among all non-bankrupt players. Frontend shows inline "BID $X" / "PASS" buttons in action box (no modal). Bid auto-increments by $10. Each bidder gets turn timer.
 
 ### Database Schema
 
@@ -138,7 +140,7 @@ Schema lives in `store/migrations.go`. To modify: update `schema` const, delete 
 - **Trading**: Propose trades for properties and money between players
 - **Bankruptcy**: Cannot pay → properties transfer to creditor (or bank if tax/card); last solvent player wins
 - **Turn timer**: 60s per turn, 3 consecutive timeouts = eliminated
-- **Auctions**: When player passes on property, round-robin bidding starts; highest bidder wins
+- **Auctions**: When player passes on property, round-robin bidding starts; each bidder has 60s timer; bid auto-increments by $10; highest bidder wins
 
 ### WebSocket Message Types
 
@@ -170,14 +172,17 @@ Schema lives in `store/migrations.go`. To modify: update `schema` const, delete 
 - Views export `render(container, router)` + `cleanup()`
 - Game view uses a 13×13 CSS grid Monopoly board with 40 spaces
 - Board renders player tokens (with bounce animation), ownership bars, mortgage indicators, house/hotel indicators
-- Turn timer displays ASCII progress bar with color-coded urgency
+- **Action box**: Hidden when not your turn; shows only when you have actions available
+- **Turn timer**: UTF-8 block progress bar (`████░░░░`) with color coding (green >30s, yellow 15-30s, red <15s)
+  - Your turn: timer in action box
+  - Other's turn: timer in players list next to current player
 - Trade modal for proposing and receiving trades
 - Dice result modal, buy/pass prompt modal, game over modal
 - **Property info panel**: Click on board spaces to see property details
 - **Card modal**: Displays drawn cards with styling
-- **Auction modal**: Shows current bid, bidder turn, bid/pass buttons
+- **Inline auction controls**: "BID $X" and "PASS" buttons in action box (auto-increment by $10)
 - **Browser notifications**: Notifies when it's your turn (if tab hidden)
-- **Confirmation dialogs**: For mortgage, accept trade, use jail card
+- **Custom confirmation modal**: Replaces browser `confirm()` for give up, mortgage, accept trade, use jail card
 - **Reconnection**: Exponential backoff with jitter, visual reconnect indicator
 - **Friends panel**: Collapsible sidebar in lobby with user search, friend requests, friends list
 
@@ -285,6 +290,7 @@ Each space has this structure:
 5. **New game commands follow the pattern**: Engine method validates + updates DB → returns Event(s) → `ws/manager.go` calls `BroadcastGameEvent()` → room broadcasts + timer management.
 6. **Frontend views must clean up** WebSocket connections and timers in `cleanup()`. Use close code 1000 for normal closure.
 7. **Store interface first**: Add interface method to the relevant store interface in `store/`, then implement in the concrete file (`game_store.go`, `lobby_store.go`, `auth_store.go`).
+8. **Use custom modals instead of browser dialogs**: Use `showConfirmModal(message, onConfirm, container)` instead of `confirm()`. Modal uses `.modal-overlay` + `.modal-content` CSS classes.
 
 ## Testing
 

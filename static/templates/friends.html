@@ -1,0 +1,32 @@
+<div class="friends-page">
+    <div class="friends-page-header">
+        <h1>Friends</h1>
+        <button id="backToLobbyBtn" class="back">Back to Lobby</button>
+    </div>
+
+    <!-- Friend Requests Section -->
+    <div class="friends-page-section" id="requestsSection" style="display: none;">
+        <h2>Friend Requests <span id="requestsCount" class="badge">0</span></h2>
+        <div class="friends-page-list" id="requestsList">
+            <div class="empty-state">No pending requests</div>
+        </div>
+    </div>
+
+    <!-- Add Friend Section -->
+    <div class="friends-page-section">
+        <h2>Add Friend</h2>
+        <div class="search-container">
+            <input type="text" id="userSearchInput" placeholder="Search users by username..." autocomplete="off">
+            <div id="searchResults" class="search-results" style="display: none;"></div>
+        </div>
+        <div id="friendsMessage"></div>
+    </div>
+
+    <!-- Friends List Section -->
+    <div class="friends-page-section">
+        <h2>My Friends</h2>
+        <div class="friends-page-list" id="friendsList">
+            <div class="empty-state">No friends yet</div>
+        </div>
+    </div>
+</div>

@@ -5,7 +5,7 @@
     </div>
     <div>
         <button id="createGameBtn">Create Game</button>
-        <button id="friendsToggleBtn" class="friends-toggle-btn">Friends <span id="friendsBadge" class="badge" style="display: none;">0</span></button>
+        <button id="friendsPageBtn">Friends <span id="friendsBadge" class="badge" style="display: none;">0</span></button>
         <button class="logout" id="logoutBtn">Logout</button>
     </div>
 </div>
@@ -14,37 +14,6 @@
     <div class="games-container">
         <h2>Available Games</h2>
         <div id="gamesList"></div>
-    </div>
-
-    <!-- Friends Panel (collapsible sidebar) -->
-    <div id="friendsPanel" class="friends-panel" style="display: none;">
-        <div class="friends-panel-header">
-            <h3>Friends</h3>
-            <button id="closeFriendsBtn" class="close-panel-btn">&times;</button>
-        </div>
-
-        <!-- Friend Requests Section -->
-        <div class="friends-section" id="friendRequestsSection" style="display: none;">
-            <h4>Friend Requests <span id="requestsCount" class="badge">0</span></h4>
-            <div id="friendRequestsList" class="friends-list"></div>
-        </div>
-
-        <!-- Add Friend Section -->
-        <div class="friends-section">
-            <h4>Add Friend</h4>
-            <div class="search-container">
-                <input type="text" id="userSearchInput" placeholder="Search users..." autocomplete="off">
-                <div id="searchResults" class="search-results" style="display: none;"></div>
-            </div>
-        </div>
-
-        <!-- Friends List Section -->
-        <div class="friends-section">
-            <h4>My Friends</h4>
-            <div id="friendsList" class="friends-list">
-                <div class="empty-state">No friends yet</div>
-            </div>
-        </div>
     </div>
 </div>
 

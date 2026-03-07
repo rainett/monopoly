@@ -443,6 +443,22 @@ func (e *Engine) RollDice(gameID, userID int64) ([]*Event, error) {
 	}
 	events = append(events, resolutionEvents...)
 
+	// Auto-end turn if:
+	// - Not doubles (can't roll again)
+	// - No pending action requiring player input (buy_or_pass)
+	// Note: Players who were already in jail take the rollDiceInJail path.
+	// If a player ends up in jail here, it's from landing on Go To Jail or a card,
+	// and their turn should end.
+	if !isDoubles {
+		updatedPlayer, err := e.store.GetPlayerTx(tx, gameID, userID)
+		if err == nil && updatedPlayer != nil && updatedPlayer.PendingAction == "" {
+			turnEvent, err := e.endTurnInternalTx(tx, gameID, userID)
+			if err == nil && turnEvent != nil {
+				events = append(events, turnEvent)
+			}
+		}
+	}
+
 	if err := e.store.CommitTx(tx); err != nil {
 		return nil, err
 	}
@@ -658,6 +674,12 @@ func (e *Engine) rollDiceInJail(gameID, userID int64, player *Player, die1, die2
 					ForcedBail: false,
 				},
 			})
+
+			// Auto-end turn since player can't take more actions while in jail
+			turnEvent, err := e.endTurnInternalTx(tx, gameID, userID)
+			if err == nil && turnEvent != nil {
+				events = append(events, turnEvent)
+			}
 		}
 	}
 
@@ -1786,7 +1808,7 @@ func (e *Engine) handleBankruptcyTx(tx *sql.Tx, gameID, userID int64, username, 
 	return events, nil
 }
 
-func (e *Engine) BuyProperty(gameID, userID int64) (*Event, error) {
+func (e *Engine) BuyProperty(gameID, userID int64) ([]*Event, error) {
 	tx, err := e.store.BeginTx()
 	if err != nil {
 		return nil, err
@@ -1823,21 +1845,38 @@ func (e *Engine) BuyProperty(gameID, userID int64) (*Event, error) {
 		return nil, err
 	}
 
+	events := []*Event{
+		{
+			Type:   "property_bought",
+			GameID: gameID,
+			Payload: PropertyBoughtPayload{
+				UserID:   userID,
+				Position: player.Position,
+				Name:     space.Name,
+				Price:    space.Price,
+				NewMoney: newMoney,
+			},
+		},
+	}
+
+	// Auto-end turn after buying (unless player has doubles)
+	doublesCount := e.doublesCount[gameID]
+	if doublesCount == 0 {
+		// End turn and advance to next player
+		turnEvent, err := e.endTurnInternalTx(tx, gameID, userID)
+		if err != nil {
+			return nil, err
+		}
+		if turnEvent != nil {
+			events = append(events, turnEvent)
+		}
+	}
+
 	if err := e.store.CommitTx(tx); err != nil {
 		return nil, err
 	}
 
-	return &Event{
-		Type:   "property_bought",
-		GameID: gameID,
-		Payload: PropertyBoughtPayload{
-			UserID:   userID,
-			Position: player.Position,
-			Name:     space.Name,
-			Price:    space.Price,
-			NewMoney: newMoney,
-		},
-	}, nil
+	return events, nil
 }
 
 func (e *Engine) PassProperty(gameID, userID int64) ([]*Event, error) {
@@ -1913,7 +1952,7 @@ func (e *Engine) PassProperty(gameID, userID int64) ([]*Event, error) {
 		GameID:          gameID,
 		Position:        player.Position,
 		PropertyName:    space.Name,
-		HighestBid:      0,
+		HighestBid:      space.Price,
 		HighestBidderID: 0,
 		BidderOrder:     bidderOrder,
 		CurrentBidder:   0,
@@ -1928,7 +1967,7 @@ func (e *Engine) PassProperty(gameID, userID int64) ([]*Event, error) {
 		Payload: AuctionStartedPayload{
 			Position:      player.Position,
 			PropertyName:  space.Name,
-			StartingBid:   1,
+			StartingBid:   space.Price,
 			BidderOrder:   bidderOrder,
 			CurrentBidder: bidderOrder[0],
 		},
@@ -2151,6 +2190,18 @@ func (e *Engine) endAuction(gameID int64, auction *Auction, state *GameState) ([
 	// Remove auction
 	delete(e.activeAuctions, gameID)
 
+	// Auto-end turn for the current player after auction ends
+	// The auction was triggered because a player passed on a property,
+	// so after it concludes, we should advance to the next player
+	// (unless the current player had doubles)
+	doublesCount := e.doublesCount[gameID]
+	if doublesCount == 0 && state.CurrentPlayerID != 0 {
+		turnEvent, err := e.ForceEndTurn(gameID, state.CurrentPlayerID)
+		if err == nil && turnEvent != nil {
+			events = append(events, turnEvent)
+		}
+	}
+
 	return events, nil
 }
 
@@ -2298,6 +2349,159 @@ func (e *Engine) EliminatePlayerForTimeouts(gameID, userID int64) (*Event, error
 	}, nil
 }
 
+// GiveUp allows a player to voluntarily forfeit the game
+func (e *Engine) GiveUp(gameID, userID int64) ([]*Event, error) {
+	state, err := e.GetGameState(gameID)
+	if err != nil {
+		return nil, err
+	}
+
+	if state.Status != StatusInProgress {
+		return nil, errors.GameNotStarted()
+	}
+
+	var player *Player
+	for _, p := range state.Players {
+		if p.UserID == userID {
+			player = p
+			break
+		}
+	}
+
+	if player == nil {
+		return nil, errors.NotInGame()
+	}
+
+	if player.IsBankrupt {
+		return nil, errors.PlayerBankrupt()
+	}
+
+	tx, err := e.store.BeginTx()
+	if err != nil {
+		return nil, err
+	}
+	defer e.store.RollbackTx(tx)
+
+	// Mark player as bankrupt
+	if err := e.store.SetPlayerBankruptTx(tx, gameID, userID); err != nil {
+		return nil, err
+	}
+
+	// Release all their properties
+	if err := e.store.DeletePlayerPropertiesTx(tx, gameID, userID); err != nil {
+		return nil, err
+	}
+
+	// Clear pending action
+	if err := e.store.SetPlayerPendingActionTx(tx, gameID, userID, ""); err != nil {
+		return nil, err
+	}
+
+	events := []*Event{}
+
+	// Add bankrupt event
+	events = append(events, &Event{
+		Type:   "player_bankrupt",
+		GameID: gameID,
+		Payload: PlayerBankruptPayload{
+			UserID:   userID,
+			Username: player.Username,
+			Reason:   "gave up",
+		},
+	})
+
+	// Check if game should end
+	activePlayers, err := e.store.GetActivePlayersTx(tx, gameID)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(activePlayers) <= 1 {
+		// Game over - one player left
+		if err := e.store.UpdateGameStatusTx(tx, gameID, StatusFinished); err != nil {
+			return nil, err
+		}
+
+		if err := e.store.CommitTx(tx); err != nil {
+			return nil, err
+		}
+
+		var winnerID int64
+		if len(activePlayers) == 1 {
+			winnerID = activePlayers[0].UserID
+		}
+
+		// Get final player states
+		finalPlayers, _ := e.store.GetGamePlayers(gameID)
+		resultPlayers := make([]*Player, len(finalPlayers))
+		for i, p := range finalPlayers {
+			resultPlayers[i] = &Player{
+				UserID:     p.UserID,
+				Username:   p.Username,
+				Money:      p.Money,
+				IsBankrupt: p.IsBankrupt,
+			}
+		}
+
+		events = append(events, &Event{
+			Type:   "game_finished",
+			GameID: gameID,
+			Payload: GameFinishedPayload{
+				Players:  resultPlayers,
+				WinnerID: winnerID,
+			},
+		})
+
+		return events, nil
+	}
+
+	// If it was this player's turn, advance to next player
+	if state.CurrentPlayerID == userID {
+		// Find next player
+		currentIdx := -1
+		for i, p := range activePlayers {
+			if p.UserID == userID {
+				currentIdx = i
+				break
+			}
+		}
+
+		var nextPlayer *store.GamePlayer
+		if currentIdx == -1 {
+			nextPlayer = activePlayers[0]
+		} else {
+			nextIdx := (currentIdx + 1) % len(activePlayers)
+			nextPlayer = activePlayers[nextIdx]
+		}
+
+		// Reset doubles count
+		e.doublesCount[gameID] = 0
+
+		if err := e.store.ResetPlayerTurnStateTx(tx, gameID, nextPlayer.UserID); err != nil {
+			return nil, err
+		}
+
+		if err := e.store.UpdateCurrentTurnTx(tx, gameID, nextPlayer.UserID); err != nil {
+			return nil, err
+		}
+
+		events = append(events, &Event{
+			Type:   "turn_changed",
+			GameID: gameID,
+			Payload: TurnChangedPayload{
+				PreviousPlayerID: userID,
+				CurrentPlayerID:  nextPlayer.UserID,
+			},
+		})
+	}
+
+	if err := e.store.CommitTx(tx); err != nil {
+		return nil, err
+	}
+
+	return events, nil
+}
+
 func (e *Engine) endTurnInternal(gameID, userID int64, force bool) (*Event, error) {
 	state, err := e.GetGameState(gameID)
 	if err != nil {
@@ -2381,6 +2585,54 @@ func (e *Engine) endTurnInternal(gameID, userID int64, force bool) (*Event, erro
 	}
 
 	if err := e.store.CommitTx(tx); err != nil {
+		return nil, err
+	}
+
+	return &Event{
+		Type:   "turn_changed",
+		GameID: gameID,
+		Payload: TurnChangedPayload{
+			PreviousPlayerID: userID,
+			CurrentPlayerID:  nextPlayer.UserID,
+		},
+	}, nil
+}
+
+// endTurnInternalTx advances to the next player within an existing transaction
+// This is used for auto-ending turns after certain actions
+func (e *Engine) endTurnInternalTx(tx *sql.Tx, gameID, userID int64) (*Event, error) {
+	// Reset doubles count
+	e.doublesCount[gameID] = 0
+
+	activePlayers, err := e.store.GetActivePlayersTx(tx, gameID)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(activePlayers) == 0 {
+		return nil, nil
+	}
+
+	currentIdx := -1
+	for i, p := range activePlayers {
+		if p.UserID == userID {
+			currentIdx = i
+			break
+		}
+	}
+
+	if currentIdx == -1 {
+		currentIdx = len(activePlayers) - 1
+	}
+
+	nextIdx := (currentIdx + 1) % len(activePlayers)
+	nextPlayer := activePlayers[nextIdx]
+
+	if err := e.store.ResetPlayerTurnStateTx(tx, gameID, nextPlayer.UserID); err != nil {
+		return nil, err
+	}
+
+	if err := e.store.UpdateCurrentTurnTx(tx, gameID, nextPlayer.UserID); err != nil {
 		return nil, err
 	}
 

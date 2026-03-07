@@ -9,7 +9,6 @@
     <div class="game-main">
         <div class="game-header">
             <div class="game-title">Game <span id="gameId"></span></div>
-            <button class="back" id="backBtn">Back to Lobby</button>
         </div>
 
         <!-- Monopoly Board - flat CSS Grid -->
@@ -42,16 +41,16 @@
             <div class="space special right-8" data-space="38"><div class="space-inner"><div class="space-name"></div></div></div>
             <div class="space property right-9" data-space="39"><div class="space-inner"><div class="space-color"></div><div class="space-name"></div></div></div>
 
-            <!-- Bottom row (right to left: 9-1) -->
-            <div class="space property bottom-1" data-space="9"><div class="space-inner"><div class="space-color"></div><div class="space-name"></div></div></div>
-            <div class="space property bottom-2" data-space="8"><div class="space-inner"><div class="space-color"></div><div class="space-name"></div></div></div>
-            <div class="space special bottom-3" data-space="7"><div class="space-inner"><div class="space-name"></div></div></div>
-            <div class="space property bottom-4" data-space="6"><div class="space-inner"><div class="space-color"></div><div class="space-name"></div></div></div>
+            <!-- Bottom row (right to left: 1-9) -->
+            <div class="space property bottom-1" data-space="1"><div class="space-inner"><div class="space-color"></div><div class="space-name"></div></div></div>
+            <div class="space special bottom-2" data-space="2"><div class="space-inner"><div class="space-name"></div></div></div>
+            <div class="space property bottom-3" data-space="3"><div class="space-inner"><div class="space-color"></div><div class="space-name"></div></div></div>
+            <div class="space special bottom-4" data-space="4"><div class="space-inner"><div class="space-name"></div></div></div>
             <div class="space railroad bottom-5" data-space="5"><div class="space-inner"><div class="space-name"></div></div></div>
-            <div class="space special bottom-6" data-space="4"><div class="space-inner"><div class="space-name"></div></div></div>
-            <div class="space property bottom-7" data-space="3"><div class="space-inner"><div class="space-color"></div><div class="space-name"></div></div></div>
-            <div class="space special bottom-8" data-space="2"><div class="space-inner"><div class="space-name"></div></div></div>
-            <div class="space property bottom-9" data-space="1"><div class="space-inner"><div class="space-color"></div><div class="space-name"></div></div></div>
+            <div class="space property bottom-6" data-space="6"><div class="space-inner"><div class="space-color"></div><div class="space-name"></div></div></div>
+            <div class="space special bottom-7" data-space="7"><div class="space-inner"><div class="space-name"></div></div></div>
+            <div class="space property bottom-8" data-space="8"><div class="space-inner"><div class="space-color"></div><div class="space-name"></div></div></div>
+            <div class="space property bottom-9" data-space="9"><div class="space-inner"><div class="space-color"></div><div class="space-name"></div></div></div>
 
             <!-- Left column (bottom to top: 19-11) -->
             <div class="space property left-1" data-space="19"><div class="space-inner"><div class="space-color"></div><div class="space-name"></div></div></div>
@@ -74,10 +73,8 @@
                         <button id="sendChatBtn">Send</button>
                     </div>
                 </div>
-                <div class="game-controls">
+                <div class="game-controls" id="gameControls">
                     <div class="status-info">
-                        <div>Status: <span id="gameStatus"></span></div>
-                        <div id="currentTurn"></div>
                         <div id="turnTimer" class="turn-timer" style="display:none;"></div>
                         <div id="diceResult" class="dice-result" style="display:none;"></div>
                     </div>
@@ -92,11 +89,28 @@
                                 <button id="passBtn" class="secondary-btn">Pass</button>
                             </div>
                         </div>
-                        <button id="endTurnBtn" disabled>End Turn</button>
-                        <button id="tradeBtn" class="secondary-btn">Trade</button>
+                        <div id="auctionControls" class="auction-controls" style="display:none;">
+                            <div id="auctionInfo" class="auction-info"></div>
+                            <div class="auction-buttons">
+                                <button id="auctionBidBtn" class="primary-btn">Bid $10</button>
+                                <button id="auctionPassBtn" class="secondary-btn">Pass</button>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
         </div>
+    </div>
+</div>
+
+<!-- Card Modal -->
+<div id="cardModal" class="card-modal-overlay" style="display:none;">
+    <div class="card-modal">
+        <div class="card-header"></div>
+        <div class="card-body">
+            <p class="card-text"></p>
+            <p class="card-effect"></p>
+        </div>
+        <button class="card-dismiss-btn">OK</button>
     </div>
 </div>

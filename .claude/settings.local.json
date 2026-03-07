@@ -15,7 +15,9 @@
       "Bash(findstr:*)",
       "Bash(ping:*)",
       "Bash(del:*)",
-      "Bash(which node:*)"
+      "Bash(which node:*)",
+      "Bash(cd \"C:\\\\Users\\\\PavloKoval1\\\\GolandProjects\\\\monopoly\" && node --check static/js/views/game.js 2>&1 && node --check static/js/views/friends.js 2>&1)",
+      "Bash(cd \"C:\\\\Users\\\\PavloKoval1\\\\GolandProjects\\\\monopoly\" && node --check static/js/app.js 2>&1)"
     ]
   }
 }

@@ -31,18 +31,14 @@ export async function render(container, router) {
     container.innerHTML = template;
 
     container.querySelector('#gameId').textContent = gameId;
-    container.querySelector('#backBtn').addEventListener('click', () => {
-        cleanup();
-        router.navigate('/lobby');
-    });
 
-    container.querySelector('#endTurnBtn').addEventListener('click', endTurn);
     container.querySelector('#rollDiceBtn').addEventListener('click', rollDice);
     container.querySelector('#buyBtn').addEventListener('click', buyProperty);
     container.querySelector('#passBtn').addEventListener('click', passProperty);
     container.querySelector('#payBailBtn').addEventListener('click', payJailBail);
     container.querySelector('#useJailCardBtn').addEventListener('click', useJailCard);
-    container.querySelector('#tradeBtn').addEventListener('click', () => openTradeModal(container));
+    container.querySelector('#auctionBidBtn').addEventListener('click', placeBid);
+    container.querySelector('#auctionPassBtn').addEventListener('click', passAuction);
 
     const chatInput = container.querySelector('#chatInput');
     const sendChatBtn = container.querySelector('#sendChatBtn');
@@ -142,7 +138,7 @@ async function loadGameState(gameId, userId, container) {
 function handleWebSocketMessage(message, gameId, userId, container) {
     switch (message.type) {
         case 'player_joined':
-            addLog(`${message.payload.player.username} joined the game`, 'event', container);
+            addLog('joined the game', 'event', container, message.payload.player.userId, message.payload.player.username);
             loadGameState(gameId, userId, container);
             break;
 
@@ -151,14 +147,17 @@ function handleWebSocketMessage(message, gameId, userId, container) {
             loadGameState(gameId, userId, container);
             break;
 
-        case 'turn_changed':
-            updateTurnFromPayload(message.payload, userId, container);
-            addLog(`Turn changed to ${getPlayerName(message.payload.currentPlayerId)}`, 'event', container);
+        case 'turn_changed': {
+            const tcPayload = message.payload;
+            updateTurnFromPayload(tcPayload, userId, container);
+            const tcPlayer = gameState?.players.find(p => p.userId === tcPayload.currentPlayerId);
+            addLog("'s turn", 'event', container, tcPayload.currentPlayerId, tcPlayer?.username || getPlayerName(tcPayload.currentPlayerId));
             // Send browser notification if it's the user's turn and tab is not focused
-            if (message.payload.currentPlayerId === userId) {
+            if (tcPayload.currentPlayerId === userId) {
                 sendTurnNotification();
             }
             break;
+        }
 
         case 'turn_timeout':
             updateTurnFromPayload(message.payload, userId, container);
@@ -167,19 +166,20 @@ function handleWebSocketMessage(message, gameId, userId, container) {
 
         case 'dice_rolled': {
             const p = message.payload;
-            const name = getPlayerName(p.userId);
-            let rollMsg = `${name} rolled ${p.die1} + ${p.die2} = ${p.total}`;
+            const drPlayer = gameState?.players.find(pl => pl.userId === p.userId);
+            const drName = drPlayer?.username || getPlayerName(p.userId);
+            let rollMsg = `rolled ${p.die1} + ${p.die2} = ${p.total}`;
             if (p.isDoubles) {
                 rollMsg += ' DOUBLES!';
                 if (p.doublesCount >= 3) {
                     rollMsg += ' (Third doubles - Go to Jail!)';
                 }
             }
-            addLog(rollMsg, 'event', container);
+            addLog(rollMsg, 'event', container, p.userId, drName);
             if (p.passedGo) {
-                addLog(`${name} passed GO - collected $200`, 'event', container);
+                addLog('passed GO - collected $200', 'event', container, p.userId, drName);
             }
-            addLog(`${name} landed on ${p.spaceName}`, 'event', container);
+            addLog(`landed on ${p.spaceName}`, 'event', container, p.userId, drName);
             // Update player position in local state
             if (gameState) {
                 const player = gameState.players.find(pl => pl.userId === p.userId);
@@ -198,14 +198,14 @@ function handleWebSocketMessage(message, gameId, userId, container) {
 
         case 'buy_prompt': {
             const p = message.payload;
-            if (gameState) {
-                const player = gameState.players.find(pl => pl.userId === p.userId);
-                if (player) player.pendingAction = 'buy_or_pass';
+            const bpPlayer = gameState?.players.find(pl => pl.userId === p.userId);
+            if (gameState && bpPlayer) {
+                bpPlayer.pendingAction = 'buy_or_pass';
             }
             if (p.userId === userId) {
                 showBuyPrompt(p.name, p.price, container);
             } else {
-                addLog(`${getPlayerName(p.userId)} can buy ${p.name} for $${p.price}`, 'event', container);
+                addLog(`can buy ${p.name} for $${p.price}`, 'event', container, p.userId, bpPlayer?.username || getPlayerName(p.userId));
             }
             updateControls(userId, container);
             break;
@@ -213,12 +213,12 @@ function handleWebSocketMessage(message, gameId, userId, container) {
 
         case 'property_bought': {
             const p = message.payload;
-            addLog(`${getPlayerName(p.userId)} bought ${p.name} for $${p.price}`, 'event', container);
+            const pbPlayer = gameState?.players.find(pl => pl.userId === p.userId);
+            addLog(`bought ${p.name} for $${p.price}`, 'event', container, p.userId, pbPlayer?.username || getPlayerName(p.userId));
             if (gameState) {
-                const player = gameState.players.find(pl => pl.userId === p.userId);
-                if (player) {
-                    player.money = p.newMoney;
-                    player.pendingAction = '';
+                if (pbPlayer) {
+                    pbPlayer.money = p.newMoney;
+                    pbPlayer.pendingAction = '';
                 }
                 if (!gameState.properties) gameState.properties = {};
                 gameState.properties[p.position] = p.userId;
@@ -231,10 +231,10 @@ function handleWebSocketMessage(message, gameId, userId, container) {
 
         case 'property_passed': {
             const p = message.payload;
-            addLog(`${getPlayerName(p.userId)} passed on ${p.name}`, 'event', container);
-            if (gameState) {
-                const player = gameState.players.find(pl => pl.userId === p.userId);
-                if (player) player.pendingAction = 'auction';
+            const ppPlayer = gameState?.players.find(pl => pl.userId === p.userId);
+            addLog(`passed on ${p.name}`, 'event', container, p.userId, ppPlayer?.username || getPlayerName(p.userId));
+            if (gameState && ppPlayer) {
+                ppPlayer.pendingAction = 'auction';
             }
             hideBuyPrompt(container);
             updateControls(userId, container);
@@ -243,22 +243,22 @@ function handleWebSocketMessage(message, gameId, userId, container) {
 
         case 'auction_started': {
             const p = message.payload;
-            addLog(`Auction started for ${p.propertyName}! Starting bid: $${p.startingBid}`, 'event', container);
-            showAuctionModal(p.position, p.propertyName, p.startingBid, p.bidderOrder, p.currentBidderId, userId, container);
+            addLog(`Auction started for ${p.propertyName}!`, 'event', container);
+            showAuctionControls(p.position, p.propertyName, p.startingBid, p.bidderOrder, p.currentBidderId, userId, container);
             break;
         }
 
         case 'auction_bid': {
             const p = message.payload;
             addLog(`${p.bidderName} bid $${p.bidAmount}`, 'event', container);
-            updateAuctionModal(p.bidAmount, p.bidderName, p.nextBidderId, userId, container);
+            updateAuctionBid(p.bidAmount, p.bidderName, p.nextBidderId, userId, container);
             break;
         }
 
         case 'auction_passed': {
             const p = message.payload;
-            addLog(`${p.passerName} passed on the auction (${p.remainingCount} bidders left)`, 'event', container);
-            updateAuctionModal(null, null, p.nextBidderId, userId, container);
+            addLog(`${p.passerName} passed (${p.remainingCount} left)`, 'event', container);
+            updateAuctionBid(null, null, p.nextBidderId, userId, container);
             break;
         }
 
@@ -282,19 +282,18 @@ function handleWebSocketMessage(message, gameId, userId, container) {
                 const player = gameState.players.find(pl => pl.pendingAction === 'auction');
                 if (player) player.pendingAction = '';
             }
-            hideAuctionModal(container);
-            updateControls(userId, container);
+            hideAuctionControls(container);
             break;
         }
 
         case 'rent_paid': {
             const p = message.payload;
-            addLog(`${getPlayerName(p.payerId)} paid $${p.amount} rent to ${getPlayerName(p.ownerId)} for ${p.name}`, 'event', container);
+            const rpPayer = gameState?.players.find(pl => pl.userId === p.payerId);
+            const rpOwner = gameState?.players.find(pl => pl.userId === p.ownerId);
+            addLog(`paid $${p.amount} rent to ${rpOwner?.username || getPlayerName(p.ownerId)} for ${p.name}`, 'event', container, p.payerId, rpPayer?.username || getPlayerName(p.payerId));
             if (gameState) {
-                const payer = gameState.players.find(pl => pl.userId === p.payerId);
-                const owner = gameState.players.find(pl => pl.userId === p.ownerId);
-                if (payer) payer.money = p.payerMoney;
-                if (owner) owner.money = p.ownerMoney;
+                if (rpPayer) rpPayer.money = p.payerMoney;
+                if (rpOwner) rpOwner.money = p.ownerMoney;
                 updateUI(gameState, userId, container);
             }
             break;
@@ -302,10 +301,10 @@ function handleWebSocketMessage(message, gameId, userId, container) {
 
         case 'tax_paid': {
             const p = message.payload;
-            addLog(`${getPlayerName(p.userId)} paid $${p.amount} in taxes`, 'event', container);
+            const tpPlayer = gameState?.players.find(pl => pl.userId === p.userId);
+            addLog(`paid $${p.amount} in taxes`, 'event', container, p.userId, tpPlayer?.username || getPlayerName(p.userId));
             if (gameState) {
-                const player = gameState.players.find(pl => pl.userId === p.userId);
-                if (player) player.money = p.newMoney;
+                if (tpPlayer) tpPlayer.money = p.newMoney;
                 updateUI(gameState, userId, container);
             }
             break;
@@ -313,15 +312,13 @@ function handleWebSocketMessage(message, gameId, userId, container) {
 
         case 'go_to_jail': {
             const p = message.payload;
+            const gtjPlayer = gameState?.players.find(pl => pl.userId === p.userId);
             const reason = p.reason === 'three_doubles' ? ' (rolled three doubles!)' : '';
-            addLog(`${getPlayerName(p.userId)} was sent to Jail!${reason}`, 'event', container);
-            if (gameState) {
-                const player = gameState.players.find(pl => pl.userId === p.userId);
-                if (player) {
-                    player.position = 10;
-                    player.inJail = true;
-                    player.jailTurns = 0;
-                }
+            addLog(`was sent to Jail!${reason}`, 'event', container, p.userId, gtjPlayer?.username || getPlayerName(p.userId));
+            if (gameState && gtjPlayer) {
+                gtjPlayer.position = 10;
+                gtjPlayer.inJail = true;
+                gtjPlayer.jailTurns = 0;
                 updateBoard(gameState, container);
                 updateControls(userId, container);
             }
@@ -330,15 +327,13 @@ function handleWebSocketMessage(message, gameId, userId, container) {
 
         case 'jail_escape': {
             const p = message.payload;
+            const jePlayer = gameState?.players.find(pl => pl.userId === p.userId);
             const methodText = p.method === 'doubles' ? 'by rolling doubles' : 'by paying $50 bail';
-            addLog(`${getPlayerName(p.userId)} escaped from Jail ${methodText}!`, 'event', container);
-            if (gameState) {
-                const player = gameState.players.find(pl => pl.userId === p.userId);
-                if (player) {
-                    player.inJail = false;
-                    player.jailTurns = 0;
-                    if (p.newMoney !== undefined) player.money = p.newMoney;
-                }
+            addLog(`escaped from Jail ${methodText}!`, 'event', container, p.userId, jePlayer?.username || getPlayerName(p.userId));
+            if (gameState && jePlayer) {
+                jePlayer.inJail = false;
+                jePlayer.jailTurns = 0;
+                if (p.newMoney !== undefined) jePlayer.money = p.newMoney;
                 updateUI(gameState, userId, container);
             }
             break;
@@ -346,10 +341,11 @@ function handleWebSocketMessage(message, gameId, userId, container) {
 
         case 'jail_roll_failed': {
             const p = message.payload;
-            const name = getPlayerName(p.userId);
-            addLog(`${name} rolled ${p.die1} + ${p.die2} - no doubles, still in jail (attempt ${p.jailTurns}/3)`, 'event', container);
+            const jrfPlayer = gameState?.players.find(pl => pl.userId === p.userId);
+            const jrfName = jrfPlayer?.username || getPlayerName(p.userId);
+            addLog(`rolled ${p.die1} + ${p.die2} - no doubles, still in jail (attempt ${p.jailTurns}/3)`, 'event', container, p.userId, jrfName);
             if (p.forcedBail) {
-                addLog(`${name} was forced to pay $50 bail after 3 failed attempts`, 'event', container);
+                addLog('was forced to pay $50 bail after 3 failed attempts', 'event', container, p.userId, jrfName);
             }
             if (gameState) {
                 const player = gameState.players.find(pl => pl.userId === p.userId);
@@ -365,12 +361,12 @@ function handleWebSocketMessage(message, gameId, userId, container) {
 
         case 'property_mortgaged': {
             const p = message.payload;
-            addLog(`${getPlayerName(p.userId)} mortgaged ${p.name} for $${p.amount}`, 'event', container);
+            const pmPlayer = gameState?.players.find(pl => pl.userId === p.userId);
+            addLog(`mortgaged ${p.name} for $${p.amount}`, 'event', container, p.userId, pmPlayer?.username || getPlayerName(p.userId));
             if (gameState) {
                 if (!gameState.mortgagedProperties) gameState.mortgagedProperties = {};
                 gameState.mortgagedProperties[p.position] = true;
-                const player = gameState.players.find(pl => pl.userId === p.userId);
-                if (player) player.money = p.newMoney;
+                if (pmPlayer) pmPlayer.money = p.newMoney;
                 updateBoard(gameState, container);
                 updateUI(gameState, userId, container);
             }
@@ -379,13 +375,13 @@ function handleWebSocketMessage(message, gameId, userId, container) {
 
         case 'property_unmortgaged': {
             const p = message.payload;
-            addLog(`${getPlayerName(p.userId)} unmortgaged ${p.name} for $${p.amount}`, 'event', container);
+            const pumPlayer = gameState?.players.find(pl => pl.userId === p.userId);
+            addLog(`unmortgaged ${p.name} for $${p.amount}`, 'event', container, p.userId, pumPlayer?.username || getPlayerName(p.userId));
             if (gameState) {
                 if (gameState.mortgagedProperties) {
                     delete gameState.mortgagedProperties[p.position];
                 }
-                const player = gameState.players.find(pl => pl.userId === p.userId);
-                if (player) player.money = p.newMoney;
+                if (pumPlayer) pumPlayer.money = p.newMoney;
                 updateBoard(gameState, container);
                 updateUI(gameState, userId, container);
             }
@@ -394,12 +390,12 @@ function handleWebSocketMessage(message, gameId, userId, container) {
 
         case 'house_built': {
             const p = message.payload;
-            addLog(`${getPlayerName(p.userId)} built a house on ${p.name} (${p.houseCount}/4)`, 'event', container);
+            const hbPlayer = gameState?.players.find(pl => pl.userId === p.userId);
+            addLog(`built a house on ${p.name} (${p.houseCount}/4)`, 'event', container, p.userId, hbPlayer?.username || getPlayerName(p.userId));
             if (gameState) {
                 if (!gameState.improvements) gameState.improvements = {};
                 gameState.improvements[p.position] = p.houseCount;
-                const player = gameState.players.find(pl => pl.userId === p.userId);
-                if (player) player.money = p.newMoney;
+                if (hbPlayer) hbPlayer.money = p.newMoney;
                 updateBoard(gameState, container);
                 updateUI(gameState, userId, container);
             }
@@ -408,12 +404,12 @@ function handleWebSocketMessage(message, gameId, userId, container) {
 
         case 'hotel_built': {
             const p = message.payload;
-            addLog(`${getPlayerName(p.userId)} built a HOTEL on ${p.name}!`, 'event', container);
+            const htbPlayer = gameState?.players.find(pl => pl.userId === p.userId);
+            addLog(`built a HOTEL on ${p.name}!`, 'event', container, p.userId, htbPlayer?.username || getPlayerName(p.userId));
             if (gameState) {
                 if (!gameState.improvements) gameState.improvements = {};
                 gameState.improvements[p.position] = p.houseCount; // 5 = hotel
-                const player = gameState.players.find(pl => pl.userId === p.userId);
-                if (player) player.money = p.newMoney;
+                if (htbPlayer) htbPlayer.money = p.newMoney;
                 updateBoard(gameState, container);
                 updateUI(gameState, userId, container);
             }
@@ -422,7 +418,8 @@ function handleWebSocketMessage(message, gameId, userId, container) {
 
         case 'house_sold': {
             const p = message.payload;
-            addLog(`${getPlayerName(p.userId)} sold a house from ${p.name} for $${p.refund}`, 'event', container);
+            const hsPlayer = gameState?.players.find(pl => pl.userId === p.userId);
+            addLog(`sold a house from ${p.name} for $${p.refund}`, 'event', container, p.userId, hsPlayer?.username || getPlayerName(p.userId));
             if (gameState) {
                 if (!gameState.improvements) gameState.improvements = {};
                 if (p.houseCount > 0) {
@@ -430,8 +427,7 @@ function handleWebSocketMessage(message, gameId, userId, container) {
                 } else {
                     delete gameState.improvements[p.position];
                 }
-                const player = gameState.players.find(pl => pl.userId === p.userId);
-                if (player) player.money = p.newMoney;
+                if (hsPlayer) hsPlayer.money = p.newMoney;
                 updateBoard(gameState, container);
                 updateUI(gameState, userId, container);
             }
@@ -440,13 +436,16 @@ function handleWebSocketMessage(message, gameId, userId, container) {
 
         case 'card_drawn': {
             const p = message.payload;
+            const cdPlayer = gameState?.players.find(pl => pl.userId === p.userId);
             const deckName = p.deckType === 'chance' ? 'Chance' : 'Community Chest';
-            addLog(`${getPlayerName(p.userId)} drew a ${deckName} card: "${p.cardText}"`, 'event', container);
+            addLog(`drew a ${deckName} card: "${p.cardText}"`, 'event', container, p.userId, cdPlayer?.username || getPlayerName(p.userId));
             if (p.effect) {
                 addLog(`  -> ${p.effect}`, 'event', container);
             }
-            // Show card modal
-            showCardModal(p.deckType, p.cardText, p.effect, container);
+            // Show card modal for current user
+            if (p.userId === userId) {
+                showCardModal(p.deckType, p.cardText, p.effect, container);
+            }
             // Track jail card
             if (p.cardType === 'get_out_of_jail' && p.userId === userId) {
                 hasJailCard = true;
@@ -468,7 +467,8 @@ function handleWebSocketMessage(message, gameId, userId, container) {
 
         case 'card_used': {
             const p = message.payload;
-            addLog(`${getPlayerName(p.userId)} used a Get Out of Jail Free card`, 'event', container);
+            const cuPlayer = gameState?.players.find(pl => pl.userId === p.userId);
+            addLog('used a Get Out of Jail Free card', 'event', container, p.userId, cuPlayer?.username || getPlayerName(p.userId));
             if (p.userId === userId) {
                 hasJailCard = false;
             }
@@ -478,12 +478,12 @@ function handleWebSocketMessage(message, gameId, userId, container) {
 
         case 'player_bankrupt': {
             const p = message.payload;
-            addLog(`${p.username} went bankrupt! (${p.reason})`, 'event', container);
+            addLog(`went bankrupt! (${p.reason})`, 'event', container, p.userId, p.username);
             if (gameState) {
-                const player = gameState.players.find(pl => pl.userId === p.userId);
-                if (player) {
-                    player.isBankrupt = true;
-                    player.money = 0;
+                const pbkPlayer = gameState.players.find(pl => pl.userId === p.userId);
+                if (pbkPlayer) {
+                    pbkPlayer.isBankrupt = true;
+                    pbkPlayer.money = 0;
                 }
                 // Remove their properties
                 if (gameState.properties) {
@@ -508,7 +508,7 @@ function handleWebSocketMessage(message, gameId, userId, container) {
 
         case 'chat': {
             const p = message.payload;
-            addLog(`${p.username}: ${p.message}`, 'chat', container);
+            addLog(p.message, 'chat', container, p.userId, p.username);
             break;
         }
 
@@ -582,17 +582,93 @@ function updateTurnFromPayload(payload, userId, container) {
     updateUI(gameState, userId, container);
 }
 
+// Generate SVG icon based on space type and color
+function getSpaceIcon(space) {
+    const size = 24;
+    const fill = '#FFFFFF';
+
+    if (space.type === 'property') {
+        switch (space.color) {
+            case 'brown':
+            case 'light_blue':
+                // Circle
+                return `<svg viewBox="0 0 ${size} ${size}" class="space-icon">
+                    <circle cx="12" cy="12" r="10" fill="${fill}"/>
+                </svg>`;
+            case 'pink':
+            case 'orange':
+                // Triangle
+                return `<svg viewBox="0 0 ${size} ${size}" class="space-icon">
+                    <polygon points="12,2 22,22 2,22" fill="${fill}"/>
+                </svg>`;
+            case 'red':
+            case 'yellow':
+                // Square
+                return `<svg viewBox="0 0 ${size} ${size}" class="space-icon">
+                    <rect x="2" y="2" width="20" height="20" fill="${fill}"/>
+                </svg>`;
+            case 'green':
+            case 'dark_blue':
+                // Diamond
+                return `<svg viewBox="0 0 ${size} ${size}" class="space-icon">
+                    <polygon points="12,2 22,12 12,22 2,12" fill="${fill}"/>
+                </svg>`;
+        }
+    }
+
+    if (space.type === 'railroad') {
+        // 4-point star
+        return `<svg viewBox="0 0 ${size} ${size}" class="space-icon">
+            <polygon points="12,0 14,10 24,12 14,14 12,24 10,14 0,12 10,10" fill="${fill}"/>
+        </svg>`;
+    }
+
+    if (space.type === 'utility') {
+        // Hexagon
+        return `<svg viewBox="0 0 ${size} ${size}" class="space-icon">
+            <polygon points="12,2 21,7 21,17 12,22 3,17 3,7" fill="${fill}"/>
+        </svg>`;
+    }
+
+    if (space.type === 'chance') {
+        // Circle with ?
+        return `<svg viewBox="0 0 ${size} ${size}" class="space-icon">
+            <circle cx="12" cy="12" r="10" fill="none" stroke="${fill}" stroke-width="2"/>
+            <text x="12" y="17" text-anchor="middle" fill="${fill}" font-size="14" font-weight="bold">?</text>
+        </svg>`;
+    }
+
+    if (space.type === 'community_chest') {
+        // Simple chest box
+        return `<svg viewBox="0 0 ${size} ${size}" class="space-icon">
+            <rect x="2" y="8" width="20" height="14" fill="${fill}"/>
+            <rect x="2" y="6" width="20" height="4" fill="${fill}"/>
+        </svg>`;
+    }
+
+    if (space.type === 'tax') {
+        // Circle with $
+        return `<svg viewBox="0 0 ${size} ${size}" class="space-icon">
+            <circle cx="12" cy="12" r="10" fill="none" stroke="${fill}" stroke-width="2"/>
+            <text x="12" y="17" text-anchor="middle" fill="${fill}" font-size="12" font-weight="bold">$</text>
+        </svg>`;
+    }
+
+    return '';  // No icon for corners
+}
+
 function updateBoard(state, container) {
     if (!state || !state.board) return;
 
-    // Populate space names and colors from board data
+    // Populate space icons and colors from board data
     state.board.forEach(space => {
         const el = container.querySelector(`[data-space="${space.position}"]`);
         if (!el) return;
 
         const nameEl = el.querySelector('.space-name');
         if (nameEl && space.position !== 0 && space.position !== 10 && space.position !== 20 && space.position !== 30) {
-            nameEl.textContent = space.name;
+            const icon = getSpaceIcon(space);
+            nameEl.innerHTML = icon || space.name;  // Fallback to name if no icon
         }
 
         // Set color bar
@@ -602,8 +678,13 @@ function updateBoard(state, container) {
         }
     });
 
-    // Clear existing tokens, ownership bars, mortgage indicators, and house indicators
-    container.querySelectorAll('.player-tokens, .ownership-bar, .mortgage-indicator, .house-indicator').forEach(el => el.remove());
+    // Clear existing tokens, mortgage indicators, and house indicators
+    container.querySelectorAll('.player-tokens, .mortgage-indicator, .house-indicator').forEach(el => el.remove());
+
+    // Clear previous ownership classes
+    container.querySelectorAll('.space').forEach(el => {
+        el.classList.remove('owned-0', 'owned-1', 'owned-2', 'owned-3');
+    });
 
     // Group players by position
     const positionPlayers = {};
@@ -629,7 +710,7 @@ function updateBoard(state, container) {
         el.appendChild(tokensDiv);
     }
 
-    // Render ownership indicators
+    // Render ownership indicators via background color
     if (state.properties) {
         for (const [pos, ownerId] of Object.entries(state.properties)) {
             const el = container.querySelector(`[data-space="${pos}"]`);
@@ -638,9 +719,7 @@ function updateBoard(state, container) {
             const ownerIdx = state.players.findIndex(p => p.userId === ownerId);
             if (ownerIdx === -1) continue;
 
-            const bar = document.createElement('div');
-            bar.className = `ownership-bar owner-${ownerIdx}`;
-            el.appendChild(bar);
+            el.classList.add(`owned-${ownerIdx}`);
         }
     }
 
@@ -694,28 +773,41 @@ function updateBoard(state, container) {
 function updateUI(state, userId, container) {
     if (!state) return;
 
-    container.querySelector('#gameStatus').textContent = state.status;
+    const me = state.players.find(p => p.userId === userId);
+    const isMyTurn = me && me.isCurrentTurn && !me.isBankrupt;
+    const currentPlayer = state.players.find(p => p.isCurrentTurn);
 
     const playersListDiv = container.querySelector('#playersList');
     playersListDiv.innerHTML = state.players.map((player, idx) => `
-        <div class="player-item ${player.isCurrentTurn ? 'current-turn' : ''} ${player.isBankrupt ? 'bankrupt' : ''}">
+        <div class="player-item ${player.isCurrentTurn ? 'current-turn' : ''} ${player.isBankrupt ? 'bankrupt' : ''}"
+             data-user-id="${player.userId}" data-username="${player.username}">
             <div class="player-name">
                 <span class="player-color-dot" style="background-color:${['#FF4444','#4444FF','#44FF44','#FFFF44'][idx]}"></span>
                 ${player.username}${player.userId === userId ? ' (You)' : ''}
             </div>
-            <div class="player-money">${player.isBankrupt ? 'BANKRUPT' : '$' + player.money}</div>
+            <div class="player-info-row">
+                <span class="player-money">${player.isBankrupt ? 'BANKRUPT' : '$' + player.money}</span>
+                ${player.isCurrentTurn ? '<span class="player-timer" id="playerTimer"></span>' : ''}
+            </div>
         </div>
     `).join('');
 
-    const currentTurnDiv = container.querySelector('#currentTurn');
-    if (state.status === 'in_progress') {
-        const currentPlayer = state.players.find(p => p.isCurrentTurn);
-        if (currentPlayer) {
-            currentTurnDiv.textContent = `Current turn: ${currentPlayer.username}`;
+    // Add click handlers for player items
+    playersListDiv.querySelectorAll('.player-item').forEach(item => {
+        const itemUserId = parseInt(item.dataset.userId);
+        const isBankrupt = item.classList.contains('bankrupt');
+
+        if (!isBankrupt && state.status === 'in_progress') {
+            item.addEventListener('click', (e) => {
+                e.stopPropagation();
+                if (itemUserId === userId) {
+                    showPlayerActionPopup(e, 'self', container);
+                } else {
+                    openTradeModalWithPlayer(itemUserId, item.dataset.username, container);
+                }
+            });
         }
-    } else {
-        currentTurnDiv.textContent = '';
-    }
+    });
 
     updateControls(userId, container);
 }
@@ -723,14 +815,15 @@ function updateUI(state, userId, container) {
 function updateControls(userId, container) {
     if (!gameState) return;
 
+    const gameControls = container.querySelector('#gameControls');
     const rollBtn = container.querySelector('#rollDiceBtn');
-    const endTurnBtn = container.querySelector('#endTurnBtn');
     const payBailBtn = container.querySelector('#payBailBtn');
+    const buyPrompt = container.querySelector('#buyPrompt');
 
     if (gameState.status !== 'in_progress') {
         rollBtn.disabled = true;
-        endTurnBtn.disabled = true;
         if (payBailBtn) payBailBtn.style.display = 'none';
+        if (gameControls) gameControls.style.display = 'none';
         return;
     }
 
@@ -738,13 +831,17 @@ function updateControls(userId, container) {
     if (!me) return;
 
     const isMyTurn = me.isCurrentTurn && !me.isBankrupt;
+    const hasBuyPrompt = buyPrompt && buyPrompt.style.display !== 'none';
+    const isAuctionMyTurn = activeAuction && activeAuction.currentBidderId === userId;
+
+    // Show action box only when: my turn, or buy prompt visible, or auction active and my bid
+    const showControls = isMyTurn || hasBuyPrompt || me.pendingAction || isAuctionMyTurn;
+    if (gameControls) {
+        gameControls.style.display = showControls ? 'flex' : 'none';
+    }
 
     // Roll dice: enabled if my turn, haven't rolled, no pending action
     rollBtn.disabled = !(isMyTurn && !me.hasRolled && !me.pendingAction);
-
-    // End turn: enabled if my turn, have rolled, no pending action
-    // If in jail and just rolled (failed), can end turn
-    endTurnBtn.disabled = !(isMyTurn && me.hasRolled && !me.pendingAction);
 
     // Pay bail: show if in jail, my turn, haven't rolled, and have $50
     if (payBailBtn) {
@@ -809,6 +906,103 @@ function endTurn() {
     ws.send(JSON.stringify({ type: 'end_turn', payload: {} }));
 }
 
+function giveUp() {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    ws.send(JSON.stringify({ type: 'give_up', payload: {} }));
+}
+
+function showPlayerActionPopup(event, type, container) {
+    // Remove any existing popup
+    hidePlayerActionPopup(container);
+
+    const popup = document.createElement('div');
+    popup.className = 'player-action-popup';
+    popup.id = 'playerActionPopup';
+
+    if (type === 'self') {
+        popup.innerHTML = `
+            <button class="give-up-btn">Give Up</button>
+        `;
+
+        popup.querySelector('.give-up-btn').addEventListener('click', () => {
+            hidePlayerActionPopup(container);
+            showConfirmModal('Are you sure you want to give up? You will forfeit the game.', giveUp, container);
+        });
+    }
+
+    // Position popup near the click
+    popup.style.left = `${event.clientX}px`;
+    popup.style.top = `${event.clientY}px`;
+
+    container.appendChild(popup);
+
+    // Close popup when clicking outside
+    const closeHandler = (e) => {
+        if (!popup.contains(e.target)) {
+            hidePlayerActionPopup(container);
+            document.removeEventListener('click', closeHandler);
+        }
+    };
+    setTimeout(() => document.addEventListener('click', closeHandler), 0);
+}
+
+function hidePlayerActionPopup(container) {
+    const popup = container.querySelector('#playerActionPopup');
+    if (popup) popup.remove();
+}
+
+// Custom confirmation modal to replace browser confirm()
+function showConfirmModal(message, onConfirm, container = null) {
+    const parent = container || document.body;
+    let modal = document.querySelector('#confirmModal');
+    if (!modal) {
+        modal = document.createElement('div');
+        modal.id = 'confirmModal';
+        modal.className = 'modal-overlay';
+        parent.appendChild(modal);
+    }
+
+    modal.innerHTML = `
+        <div class="modal-content confirm-modal">
+            <h2>Confirm</h2>
+            <p class="confirm-message">${message}</p>
+            <div class="modal-actions">
+                <button class="secondary-btn" id="confirmCancelBtn">Cancel</button>
+                <button class="primary-btn" id="confirmYesBtn">Confirm</button>
+            </div>
+        </div>
+    `;
+
+    modal.style.display = 'flex';
+
+    const cancelBtn = modal.querySelector('#confirmCancelBtn');
+    const yesBtn = modal.querySelector('#confirmYesBtn');
+
+    const closeModal = () => {
+        modal.style.display = 'none';
+    };
+
+    cancelBtn.addEventListener('click', closeModal);
+    yesBtn.addEventListener('click', () => {
+        closeModal();
+        onConfirm();
+    });
+
+    // Close on escape key
+    const escHandler = (e) => {
+        if (e.key === 'Escape') {
+            closeModal();
+            document.removeEventListener('keydown', escHandler);
+        }
+    };
+    document.addEventListener('keydown', escHandler);
+}
+
+function hideConfirmModal(container) {
+    const modal = container.querySelector('#confirmModal');
+    if (modal) modal.style.display = 'none';
+}
+
 function payJailBail() {
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
     ws.send(JSON.stringify({ type: 'pay_jail_bail', payload: {} }));
@@ -816,9 +1010,9 @@ function payJailBail() {
 
 function useJailCard() {
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
-    if (confirm('Are you sure you want to use your Get Out of Jail Free card?')) {
+    showConfirmModal('Are you sure you want to use your Get Out of Jail Free card?', () => {
         ws.send(JSON.stringify({ type: 'use_jail_card', payload: {} }));
-    }
+    });
 }
 
 function mortgageProperty(position) {
@@ -855,13 +1049,34 @@ function getPlayerName(userId) {
     return player ? player.username : `Player ${userId}`;
 }
 
-function addLog(message, type = 'event', container) {
+function getPlayerColor(userId) {
+    if (!gameState) return '#c7731a';
+    const idx = gameState.players.findIndex(p => p.userId === userId);
+    return idx >= 0 ? ['#FF4444','#4444FF','#44FF44','#FFFF44'][idx] : '#c7731a';
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+function addLog(message, type = 'event', container, userId = null, username = null) {
     const logDiv = container.querySelector('#gameLog');
     if (!logDiv) return;
 
     const entry = document.createElement('div');
     entry.className = `log-entry ${type}`;
-    entry.textContent = message;
+
+    if (userId && username) {
+        entry.classList.add('has-user');
+        const color = getPlayerColor(userId);
+        const prefix = type === 'chat' ? '' : '>>> ';
+        entry.innerHTML = `${prefix}<span class="log-username" style="background-color:${color};">${escapeHtml(username)}</span>${type === 'chat' ? ': ' : ' '}${escapeHtml(message)}`;
+    } else {
+        entry.textContent = message;
+    }
+
     logDiv.appendChild(entry);
 
     const maxEntries = 100;
@@ -1011,6 +1226,22 @@ function openTradeModal(container) {
     overlay.querySelector('#cancelTradeModalBtn').addEventListener('click', () => closeTradeModal(container));
 }
 
+function openTradeModalWithPlayer(targetUserId, targetUsername, container) {
+    // Open the trade modal first
+    openTradeModal(container);
+
+    // Then pre-select the target player
+    const overlay = container.querySelector('#tradeModal');
+    if (overlay) {
+        const targetSelect = overlay.querySelector('#tradeTargetPlayer');
+        if (targetSelect) {
+            targetSelect.value = targetUserId;
+            // Trigger change event to update the requested properties
+            targetSelect.dispatchEvent(new Event('change'));
+        }
+    }
+}
+
 function updateRequestedProperties(overlay) {
     const targetSelect = overlay.querySelector('#tradeTargetPlayer');
     const targetId = parseInt(targetSelect.value);
@@ -1154,9 +1385,9 @@ function hideTradeNotification(container) {
 
 function acceptTrade(tradeId) {
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
-    if (confirm('Are you sure you want to accept this trade?')) {
+    showConfirmModal('Are you sure you want to accept this trade?', () => {
         ws.send(JSON.stringify({ type: 'accept_trade', payload: { tradeId } }));
-    }
+    });
 }
 
 function declineTrade(tradeId) {
@@ -1189,11 +1420,8 @@ function startTurnTimerDisplay(playerId, duration, container) {
 }
 
 function updateTurnTimerDisplay(playerId, container) {
-    const timerEl = container.querySelector('#turnTimer');
-    if (!timerEl) return;
-
     if (!turnTimerEnd) {
-        timerEl.style.display = 'none';
+        hideTimerElements(container);
         return;
     }
 
@@ -1206,30 +1434,34 @@ function updateTurnTimerDisplay(playerId, container) {
             clearInterval(turnTimerInterval);
             turnTimerInterval = null;
         }
-        timerEl.style.display = 'none';
+        hideTimerElements(container);
         return;
     }
 
-    // Build ASCII progress bar (20 chars wide)
-    const barWidth = 20;
+    // Build UTF-8 block progress bar (10 chars wide)
+    const barWidth = 10;
     const filled = Math.round(progress * barWidth);
     const empty = barWidth - filled;
-    const bar = '[' + '='.repeat(filled) + ' '.repeat(empty) + ']';
+    const bar = '\u2588'.repeat(filled) + '\u2591'.repeat(empty);
 
     // Determine color class based on time remaining
     let colorClass = 'timer-normal';
-    if (remaining <= 10) {
+    if (remaining <= 15) {
         colorClass = 'timer-critical';
-    } else if (remaining <= 20) {
+    } else if (remaining <= 30) {
         colorClass = 'timer-warning';
     }
 
-    // Check if this is the current user's turn
-    const isMyTurn = playerId === currentUserId;
-    const turnIndicator = isMyTurn ? 'YOUR TURN' : getPlayerName(playerId);
+    // Show timer in players list for current player
+    const playerTimerEl = container.querySelector('#playerTimer');
+    if (playerTimerEl) {
+        playerTimerEl.innerHTML = `<span class="${colorClass}">[${bar}] ${remaining}s</span>`;
+    }
+}
 
-    timerEl.innerHTML = `<span class="${colorClass}">${turnIndicator}: ${bar} ${remaining}s</span>`;
-    timerEl.style.display = 'block';
+function hideTimerElements(container) {
+    const playerTimerEl = container.querySelector('#playerTimer');
+    if (playerTimerEl) playerTimerEl.innerHTML = '';
 }
 
 function stopTurnTimerDisplay(container) {
@@ -1238,120 +1470,134 @@ function stopTurnTimerDisplay(container) {
         turnTimerInterval = null;
     }
     turnTimerEnd = null;
-    const timerEl = container.querySelector('#turnTimer');
-    if (timerEl) {
-        timerEl.style.display = 'none';
-    }
+    hideTimerElements(container);
 }
 
-// Auction functions
-function showAuctionModal(position, propertyName, startingBid, bidderOrder, currentBidderId, userId, container) {
+// Auction functions - inline controls
+function showAuctionControls(position, propertyName, startingBid, bidderOrder, currentBidderId, userId, container) {
     activeAuction = {
         position,
         propertyName,
-        highestBid: 0,
+        highestBid: startingBid,
         highestBidderName: null,
         currentBidderId,
         bidderOrder
     };
 
-    let modal = container.querySelector('#auctionModal');
-    if (!modal) {
-        modal = document.createElement('div');
-        modal.id = 'auctionModal';
-        modal.className = 'modal';
-        container.appendChild(modal);
-    }
-
-    const isMyTurn = currentBidderId === userId;
-
-    modal.innerHTML = `
-        <div class="modal-content auction-modal">
-            <h3>Property Auction</h3>
-            <p class="auction-property">${propertyName}</p>
-            <div class="auction-info">
-                <p>Minimum bid: $${startingBid}</p>
-                <p id="auctionCurrentBid">Current bid: None</p>
-                <p id="auctionBidder">Waiting for bids...</p>
-            </div>
-            <div id="auctionActions" style="display: ${isMyTurn ? 'block' : 'none'}">
-                <p id="auctionTurnIndicator" class="your-turn">Your turn to bid!</p>
-                <div class="auction-bid-controls">
-                    <input type="number" id="auctionBidInput" min="${startingBid}" value="${startingBid}" step="1">
-                    <button id="placeBidBtn" class="btn primary">Place Bid</button>
-                    <button id="passAuctionBtn" class="btn secondary">Pass</button>
-                </div>
-            </div>
-            <div id="auctionWaiting" style="display: ${isMyTurn ? 'none' : 'block'}">
-                <p>Waiting for ${getPlayerName(currentBidderId)} to bid...</p>
-            </div>
-        </div>
-    `;
-
-    modal.style.display = 'flex';
-
-    // Add event listeners
-    const placeBidBtn = modal.querySelector('#placeBidBtn');
-    const passAuctionBtn = modal.querySelector('#passAuctionBtn');
-    const bidInput = modal.querySelector('#auctionBidInput');
-
-    placeBidBtn.addEventListener('click', () => {
-        const amount = parseInt(bidInput.value);
-        if (amount > activeAuction.highestBid && ws && ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ type: 'place_bid', payload: { amount } }));
-        }
-    });
-
-    passAuctionBtn.addEventListener('click', () => {
-        if (ws && ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ type: 'pass_auction', payload: {} }));
-        }
-    });
+    updateAuctionControls(userId, container);
 }
 
-function updateAuctionModal(bidAmount, bidderName, nextBidderId, userId, container) {
-    if (!activeAuction) return;
+function updateAuctionControls(userId, container) {
+    const controls = container.querySelector('#auctionControls');
+    const infoEl = container.querySelector('#auctionInfo');
+    const bidBtn = container.querySelector('#auctionBidBtn');
+    const passBtn = container.querySelector('#auctionPassBtn');
 
-    const modal = container.querySelector('#auctionModal');
-    if (!modal) return;
+    if (!controls || !activeAuction) {
+        if (controls) controls.style.display = 'none';
+        return;
+    }
+
+    const isMyTurn = activeAuction.currentBidderId === userId;
+    const nextBid = activeAuction.highestBid + 10;
+    const minBid = Math.max(10, nextBid);
+
+    // Build info text
+    let infoText = `<span class="auction-property-name">${activeAuction.propertyName}</span>`;
+    if (activeAuction.highestBid > 0) {
+        infoText += ` | High: $${activeAuction.highestBid} (${activeAuction.highestBidderName})`;
+    }
+
+    if (isMyTurn) {
+        infoText += ` | <span class="your-bid-turn">Your turn!</span>`;
+    } else {
+        infoText += ` | Waiting for ${getPlayerName(activeAuction.currentBidderId)}...`;
+    }
+
+    infoEl.innerHTML = infoText;
+    bidBtn.textContent = `Bid $${minBid}`;
+    bidBtn.dataset.bidAmount = minBid;
+
+    // Show/hide buttons based on turn
+    bidBtn.style.display = isMyTurn ? 'inline-block' : 'none';
+    passBtn.style.display = isMyTurn ? 'inline-block' : 'none';
+
+    controls.style.display = 'block';
+
+    // Also show the game controls when auction is active
+    const gameControls = container.querySelector('#gameControls');
+    if (gameControls) gameControls.style.display = 'flex';
+}
+
+function updateAuctionBid(bidAmount, bidderName, nextBidderId, userId, container) {
+    if (!activeAuction) return;
 
     if (bidAmount !== null) {
         activeAuction.highestBid = bidAmount;
         activeAuction.highestBidderName = bidderName;
-
-        const currentBidEl = modal.querySelector('#auctionCurrentBid');
-        const bidderEl = modal.querySelector('#auctionBidder');
-
-        if (currentBidEl) currentBidEl.textContent = `Current bid: $${bidAmount}`;
-        if (bidderEl) bidderEl.textContent = `Highest bidder: ${bidderName}`;
-
-        // Update min bid input
-        const bidInput = modal.querySelector('#auctionBidInput');
-        if (bidInput) {
-            bidInput.min = bidAmount + 1;
-            bidInput.value = bidAmount + 1;
-        }
     }
 
     activeAuction.currentBidderId = nextBidderId;
-    const isMyTurn = nextBidderId === userId;
+    updateAuctionControls(userId, container);
+}
 
-    const actionsEl = modal.querySelector('#auctionActions');
-    const waitingEl = modal.querySelector('#auctionWaiting');
+function hideAuctionControls(container) {
+    activeAuction = null;
+    const controls = container.querySelector('#auctionControls');
+    if (controls) {
+        controls.style.display = 'none';
+    }
+    updateControls(currentUserId, container);
+}
 
-    if (actionsEl) actionsEl.style.display = isMyTurn ? 'block' : 'none';
-    if (waitingEl) {
-        waitingEl.style.display = isMyTurn ? 'none' : 'block';
-        waitingEl.innerHTML = `<p>Waiting for ${getPlayerName(nextBidderId)} to bid...</p>`;
+function placeBid() {
+    if (!ws || ws.readyState !== WebSocket.OPEN || !activeAuction) return;
+    const bidBtn = document.querySelector('#auctionBidBtn');
+    const amount = parseInt(bidBtn.dataset.bidAmount);
+    if (amount > activeAuction.highestBid) {
+        ws.send(JSON.stringify({ type: 'place_bid', payload: { amount } }));
     }
 }
 
-function hideAuctionModal(container) {
-    activeAuction = null;
-    const modal = container.querySelector('#auctionModal');
-    if (modal) {
+function passAuction() {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    ws.send(JSON.stringify({ type: 'pass_auction', payload: {} }));
+}
+
+// Card Modal
+function showCardModal(deckType, cardText, effect, container) {
+    const modal = container.querySelector('#cardModal');
+    if (!modal) return;
+
+    const header = modal.querySelector('.card-header');
+    const textEl = modal.querySelector('.card-text');
+    const effectEl = modal.querySelector('.card-effect');
+
+    header.textContent = deckType === 'chance' ? 'Chance' : 'Community Chest';
+    header.className = 'card-header ' + deckType;
+    textEl.textContent = cardText;
+    effectEl.textContent = effect || '';
+    effectEl.style.display = effect ? 'block' : 'none';
+
+    modal.style.display = 'flex';
+
+    // Close on overlay click
+    const closeModal = (e) => {
+        if (e.target === modal) {
+            modal.style.display = 'none';
+            modal.removeEventListener('click', closeModal);
+        }
+    };
+    modal.addEventListener('click', closeModal);
+
+    // Close on OK button
+    const dismissBtn = modal.querySelector('.card-dismiss-btn');
+    const closeOnDismiss = () => {
         modal.style.display = 'none';
-    }
+        dismissBtn.removeEventListener('click', closeOnDismiss);
+        modal.removeEventListener('click', closeModal);
+    };
+    dismissBtn.addEventListener('click', closeOnDismiss);
 }
 
 // Property Info Panel
@@ -1361,7 +1607,12 @@ function showPropertyInfoPanel(space, state, userId, container) {
         panel = document.createElement('div');
         panel.id = 'propertyInfoPanel';
         panel.className = 'property-info-panel';
-        container.appendChild(panel);
+        const boardCenter = container.querySelector('.board-center');
+        if (boardCenter) {
+            boardCenter.appendChild(panel);
+        } else {
+            container.appendChild(panel);
+        }
     }
 
     const ownerId = state.properties ? state.properties[space.position] : null;
@@ -1444,14 +1695,29 @@ function showPropertyInfoPanel(space, state, userId, container) {
 
     panel.style.display = 'block';
 
+    // Click outside to close
+    const boardCenter = container.querySelector('.board-center');
+    if (boardCenter) {
+        const clickOutsideHandler = (e) => {
+            if (!panel.contains(e.target) && panel.style.display !== 'none') {
+                hidePropertyInfoPanel(container);
+                boardCenter.removeEventListener('click', clickOutsideHandler);
+            }
+        };
+        // Delay adding the listener to prevent immediate close
+        setTimeout(() => {
+            boardCenter.addEventListener('click', clickOutsideHandler);
+        }, 0);
+    }
+
     // Set up global functions for the buttons
     window.hidePropertyPanel = () => hidePropertyInfoPanel(container);
     window.mortgageProperty = (pos) => {
-        if (confirm('Are you sure you want to mortgage this property? You will need to pay 110% to unmortgage it.')) {
+        showConfirmModal('Are you sure you want to mortgage this property? You will need to pay 110% to unmortgage it.', () => {
             if (ws && ws.readyState === WebSocket.OPEN) {
                 ws.send(JSON.stringify({ type: 'mortgage_property', payload: { position: pos } }));
             }
-        }
+        }, container);
     };
     window.unmortgageProperty = (pos) => {
         if (ws && ws.readyState === WebSocket.OPEN) {
@@ -1548,46 +1814,3 @@ function sendTurnNotification() {
     }
 }
 
-// Card Modal
-function showCardModal(deckType, cardText, effect, container) {
-    let modal = container.querySelector('#cardModal');
-    if (!modal) {
-        modal = document.createElement('div');
-        modal.id = 'cardModal';
-        modal.className = 'card-modal-overlay';
-        container.appendChild(modal);
-    }
-
-    const isChance = deckType === 'chance';
-    const headerColor = isChance ? '#FF8C00' : '#4169E1';
-    const headerText = isChance ? 'CHANCE' : 'COMMUNITY CHEST';
-
-    modal.innerHTML = `
-        <div class="card-modal ${isChance ? 'chance-card' : 'community-card'}">
-            <div class="card-header" style="background-color: ${headerColor};">
-                <span>${headerText}</span>
-            </div>
-            <div class="card-body">
-                <p class="card-text">${cardText}</p>
-                ${effect ? `<p class="card-effect">${effect}</p>` : ''}
-            </div>
-            <button class="card-dismiss-btn" onclick="this.closest('.card-modal-overlay').style.display='none'">OK</button>
-        </div>
-    `;
-
-    modal.style.display = 'flex';
-
-    // Auto-dismiss after 5 seconds
-    setTimeout(() => {
-        if (modal.style.display === 'flex') {
-            modal.style.display = 'none';
-        }
-    }, 5000);
-
-    // Click anywhere to dismiss
-    modal.onclick = (e) => {
-        if (e.target === modal) {
-            modal.style.display = 'none';
-        }
-    };
-}

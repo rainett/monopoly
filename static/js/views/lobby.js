@@ -3,8 +3,6 @@ import { templateLoader } from '../template.js';
 
 let ws = null;
 let reconnectTimeout = null;
-let searchDebounceTimeout = null;
-let friendsPanelOpen = false;
 
 export async function render(container, router) {
     if (!api.isAuthenticated()) {
@@ -20,31 +18,14 @@ export async function render(container, router) {
     container.querySelector('#createGameBtn').addEventListener('click', () => showCreateGameModal(container, router));
     container.querySelector('#logoutBtn').addEventListener('click', () => logout(router));
 
-    // Friends panel toggle
-    container.querySelector('#friendsToggleBtn').addEventListener('click', () => toggleFriendsPanel(container));
-    container.querySelector('#closeFriendsBtn').addEventListener('click', () => closeFriendsPanel(container));
-
-    // User search with debounce
-    const searchInput = container.querySelector('#userSearchInput');
-    searchInput.addEventListener('input', (e) => {
-        clearTimeout(searchDebounceTimeout);
-        searchDebounceTimeout = setTimeout(() => searchUsers(container, e.target.value), 300);
-    });
-
-    // Close search results on outside click
-    document.addEventListener('click', (e) => {
-        const searchResults = container.querySelector('#searchResults');
-        const searchContainer = container.querySelector('.search-container');
-        if (searchResults && searchContainer && !searchContainer.contains(e.target)) {
-            searchResults.style.display = 'none';
-        }
-    });
+    // Friends page navigation
+    container.querySelector('#friendsPageBtn').addEventListener('click', () => router.navigate('/friends'));
 
     // Initial load of games
     loadGames(container, router);
 
-    // Load friends data
-    loadFriendsData(container);
+    // Load pending friend requests count for badge
+    loadFriendRequestsCount(container);
 
     // Connect to lobby WebSocket
     connectLobbyWebSocket(container, router);
@@ -56,16 +37,9 @@ export function cleanup() {
         reconnectTimeout = null;
     }
 
-    if (searchDebounceTimeout) {
-        clearTimeout(searchDebounceTimeout);
-        searchDebounceTimeout = null;
-    }
-
-    friendsPanelOpen = false;
-
     if (ws) {
         ws.onclose = null;
-        ws.close(1000, 'Navigation'); // Send normal closure code
+        ws.close(1000, 'Navigation');
         ws = null;
     }
 }
@@ -619,91 +593,15 @@ async function logout(router) {
     router.navigate('/login');
 }
 
-// ============ Friends Panel Functions ============
+// ============ Friends Badge ============
 
-function toggleFriendsPanel(container) {
-    const panel = container.querySelector('#friendsPanel');
-    if (friendsPanelOpen) {
-        closeFriendsPanel(container);
-    } else {
-        panel.style.display = 'flex';
-        friendsPanelOpen = true;
-        // Refresh data when opening
-        loadFriendsData(container);
-    }
-}
-
-function closeFriendsPanel(container) {
-    const panel = container.querySelector('#friendsPanel');
-    panel.style.display = 'none';
-    friendsPanelOpen = false;
-}
-
-async function loadFriendsData(container) {
+async function loadFriendRequestsCount(container) {
     try {
-        // Load friends list and pending requests in parallel
-        const [friends, requests] = await Promise.all([
-            api.getFriends(),
-            api.getPendingRequests()
-        ]);
-
-        displayFriendsList(container, friends);
-        displayFriendRequests(container, requests);
+        const requests = await api.getPendingRequests();
         updateFriendsBadge(container, requests.length);
     } catch (error) {
-        console.error('Failed to load friends data:', error);
+        console.error('Failed to load friend requests count:', error);
     }
-}
-
-function displayFriendsList(container, friends) {
-    const friendsList = container.querySelector('#friendsList');
-    if (!friendsList) return;
-
-    if (!friends || friends.length === 0) {
-        friendsList.innerHTML = '<div class="empty-state">No friends yet</div>';
-        return;
-    }
-
-    friendsList.innerHTML = friends.map(friend => `
-        <div class="friend-item" data-user-id="${friend.userId}">
-            <span class="friend-name">${friend.username}</span>
-        </div>
-    `).join('');
-}
-
-function displayFriendRequests(container, requests) {
-    const requestsSection = container.querySelector('#friendRequestsSection');
-    const requestsList = container.querySelector('#friendRequestsList');
-    const requestsCount = container.querySelector('#requestsCount');
-
-    if (!requestsSection || !requestsList) return;
-
-    if (!requests || requests.length === 0) {
-        requestsSection.style.display = 'none';
-        return;
-    }
-
-    requestsSection.style.display = 'block';
-    requestsCount.textContent = requests.length;
-
-    requestsList.innerHTML = requests.map(req => `
-        <div class="friend-request-item" data-from-id="${req.fromUserId}">
-            <span class="requester-name">${req.fromUsername}</span>
-            <div class="request-actions">
-                <button class="accept-request-btn" data-user-id="${req.fromUserId}">Accept</button>
-                <button class="decline-request-btn" data-user-id="${req.fromUserId}">Decline</button>
-            </div>
-        </div>
-    `).join('');
-
-    // Add event listeners
-    requestsList.querySelectorAll('.accept-request-btn').forEach(btn => {
-        btn.addEventListener('click', () => acceptFriendRequest(container, parseInt(btn.dataset.userId)));
-    });
-
-    requestsList.querySelectorAll('.decline-request-btn').forEach(btn => {
-        btn.addEventListener('click', () => declineFriendRequest(container, parseInt(btn.dataset.userId)));
-    });
 }
 
 function updateFriendsBadge(container, count) {
@@ -716,116 +614,4 @@ function updateFriendsBadge(container, count) {
     } else {
         badge.style.display = 'none';
     }
-}
-
-async function searchUsers(container, query) {
-    const searchResults = container.querySelector('#searchResults');
-    if (!searchResults) return;
-
-    if (query.length < 2) {
-        searchResults.style.display = 'none';
-        return;
-    }
-
-    try {
-        const users = await api.searchUsers(query);
-        displaySearchResults(container, users);
-    } catch (error) {
-        console.error('User search failed:', error);
-        searchResults.innerHTML = '<div class="search-error">Search failed</div>';
-        searchResults.style.display = 'block';
-    }
-}
-
-function displaySearchResults(container, users) {
-    const searchResults = container.querySelector('#searchResults');
-    if (!searchResults) return;
-
-    if (!users || users.length === 0) {
-        searchResults.innerHTML = '<div class="no-results">No users found</div>';
-        searchResults.style.display = 'block';
-        return;
-    }
-
-    searchResults.innerHTML = users.map(user => `
-        <div class="search-result-item" data-user-id="${user.userId}">
-            <span class="result-username">${user.username}</span>
-            <button class="add-friend-btn" data-user-id="${user.userId}">Add</button>
-        </div>
-    `).join('');
-
-    searchResults.style.display = 'block';
-
-    // Add event listeners
-    searchResults.querySelectorAll('.add-friend-btn').forEach(btn => {
-        btn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            sendFriendRequest(container, parseInt(btn.dataset.userId));
-        });
-    });
-}
-
-async function sendFriendRequest(container, userId) {
-    try {
-        await api.sendFriendRequest(userId);
-        // Clear search
-        const searchInput = container.querySelector('#userSearchInput');
-        const searchResults = container.querySelector('#searchResults');
-        if (searchInput) searchInput.value = '';
-        if (searchResults) searchResults.style.display = 'none';
-        // Show success feedback
-        showFriendsMessage(container, 'Friend request sent!', 'success');
-    } catch (error) {
-        console.error('Failed to send friend request:', error);
-        showFriendsMessage(container, error.message || 'Failed to send request', 'error');
-    }
-}
-
-async function acceptFriendRequest(container, friendId) {
-    try {
-        await api.acceptFriendRequest(friendId);
-        // Reload friends data
-        loadFriendsData(container);
-        showFriendsMessage(container, 'Friend request accepted!', 'success');
-    } catch (error) {
-        console.error('Failed to accept friend request:', error);
-        showFriendsMessage(container, error.message || 'Failed to accept', 'error');
-    }
-}
-
-async function declineFriendRequest(container, friendId) {
-    try {
-        await api.declineFriendRequest(friendId);
-        // Reload friends data
-        loadFriendsData(container);
-        showFriendsMessage(container, 'Friend request declined', 'success');
-    } catch (error) {
-        console.error('Failed to decline friend request:', error);
-        showFriendsMessage(container, error.message || 'Failed to decline', 'error');
-    }
-}
-
-function showFriendsMessage(container, message, type) {
-    const panel = container.querySelector('#friendsPanel');
-    if (!panel) return;
-
-    // Remove existing message
-    const existingMsg = panel.querySelector('.friends-message');
-    if (existingMsg) existingMsg.remove();
-
-    // Create message element
-    const msgDiv = document.createElement('div');
-    msgDiv.className = `friends-message ${type}`;
-    msgDiv.textContent = message;
-
-    // Insert after header
-    const header = panel.querySelector('.friends-panel-header');
-    if (header) {
-        header.after(msgDiv);
-    }
-
-    // Auto-remove after 3 seconds
-    setTimeout(() => {
-        msgDiv.remove();
-    }, 3000);
 }

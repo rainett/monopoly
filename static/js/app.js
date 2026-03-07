@@ -4,6 +4,7 @@ import * as LoginView from './views/login.js';
 import * as RegisterView from './views/register.js';
 import * as LobbyView from './views/lobby.js';
 import * as GameView from './views/game.js';
+import * as FriendsView from './views/friends.js';
 
 class App {
     constructor() {
@@ -20,12 +21,13 @@ class App {
         this.router.register('/register', () => this.loadView(RegisterView));
         this.router.register('/lobby', () => this.loadView(LobbyView));
         this.router.register('/game', () => this.loadView(GameView));
+        this.router.register('/friends', () => this.loadView(FriendsView));
 
         this.router.defaultRoute = api.isAuthenticated() ? '/lobby' : '/login';
     }
 
     setupAuthCheck() {
-        const protectedRoutes = ['/lobby', '/game'];
+        const protectedRoutes = ['/lobby', '/game', '/friends'];
         window.addEventListener('hashchange', () => {
             const currentPath = this.router.getCurrentRoute()?.path;
             if (protectedRoutes.includes(currentPath) && !api.isAuthenticated()) {
